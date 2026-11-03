@@ -262,7 +262,7 @@ describe('DriftStore - Persistence', () => {
 	it('reads what a previous session left behind', () => {
 		localStorage.setItem(
 			PERSIST_KEY,
-			JSON.stringify({ forms: { login: { ...emptyForm(), values: { email: 'a@b.com' } } } })
+			JSON.stringify({ forms: { login: { ...emptyForm(), values: { email: 'a@b.com' } } } }),
 		)
 
 		const persisted = new DriftStore({

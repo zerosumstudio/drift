@@ -11,7 +11,7 @@ export default defineConfig([
 		languageOptions: {
 			ecmaVersion: 2022,
 			sourceType: 'module',
-			globals: globals.browser,
+			globals: { ...globals.browser, process: 'readonly' },
 		},
 		rules: {
 			'@typescript-eslint/no-unused-vars': [

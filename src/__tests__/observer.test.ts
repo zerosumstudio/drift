@@ -83,7 +83,7 @@ describe('DriftObserver - Initial Scan', () => {
 				expect.objectContaining({ name: 'password' }),
 			]),
 			expect.any(HTMLFormElement),
-			'myForm'
+			'myForm',
 		)
 	})
 
@@ -106,7 +106,7 @@ describe('DriftObserver - Initial Scan', () => {
 		expect(callbacks.onFieldsAdded).toHaveBeenCalledWith(
 			expect.arrayContaining([expect.objectContaining({ name: 'visible' })]),
 			expect.any(HTMLFormElement),
-			'myForm'
+			'myForm',
 		)
 		const fields = (callbacks.onFieldsAdded as ReturnType<typeof vi.fn>).mock.calls[0][0]
 		expect(fields).toHaveLength(1)
@@ -174,7 +174,7 @@ describe('DriftObserver - Dynamic Forms', () => {
 
 		expect(callbacks.onFormAdded).toHaveBeenCalledWith(
 			expect.any(HTMLFormElement),
-			'nestedForm'
+			'nestedForm',
 		)
 	})
 })
@@ -198,7 +198,7 @@ describe('DriftObserver - Dynamic Fields', () => {
 		expect(callbacks.onFieldsAdded).toHaveBeenCalledWith(
 			[expect.objectContaining({ name: 'dynamicField' })],
 			form,
-			'myForm'
+			'myForm',
 		)
 	})
 
@@ -219,7 +219,7 @@ describe('DriftObserver - Dynamic Fields', () => {
 		expect(callbacks.onFieldRemoved).toHaveBeenCalledWith(
 			expect.objectContaining({ name: 'email' }),
 			form,
-			'myForm'
+			'myForm',
 		)
 	})
 
@@ -429,7 +429,7 @@ describe('DriftObserver - Fields inside an added subtree', () => {
 		expect(callbacks.onFieldsAdded).toHaveBeenCalledWith(
 			[expect.objectContaining({ name: 'wrapped' })],
 			form,
-			'myForm'
+			'myForm',
 		)
 	})
 
@@ -484,7 +484,7 @@ describe('DriftObserver - Containers that are not forms', () => {
 		expect(callbacks.onFieldsAdded).toHaveBeenCalledWith(
 			[expect.objectContaining({ name: 'wrapped' })],
 			box,
-			'checkout'
+			'checkout',
 		)
 	})
 
@@ -523,7 +523,7 @@ describe('DriftObserver - Nested containers', () => {
 		const announced = vi
 			.mocked(callbacks.onFieldsAdded)
 			.mock.calls.flatMap(([fields, , formKey]) =>
-				fields.map(field => `${formKey}:${field.name}`)
+				fields.map(field => `${formKey}:${field.name}`),
 			)
 
 		expect(announced).toEqual(['outer:a', 'inner:b'])
@@ -544,7 +544,7 @@ describe('DriftObserver - Nested containers', () => {
 		const announced = vi
 			.mocked(callbacks.onFieldsAdded)
 			.mock.calls.flatMap(([fields, , formKey]) =>
-				fields.map(field => `${formKey}:${field.name}`)
+				fields.map(field => `${formKey}:${field.name}`),
 			)
 
 		expect(announced).toEqual(['outer:a', 'inner:b'])

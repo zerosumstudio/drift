@@ -1,0 +1,13 @@
+import { defineConfig } from 'tsup'
+
+export default defineConfig({
+	entry: { index: 'src/index.ts' },
+	format: ['esm', 'cjs'],
+	dts: true,
+	sourcemap: true,
+	clean: true,
+	minify: true,
+	treeshake: 'recommended',
+	outDir: 'dist',
+	target: 'es2022',
+})
