@@ -1,4 +1,4 @@
-# <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zerosumstudio/drift/main/.github/assets/zerosum-on-dark.png"><img src="https://raw.githubusercontent.com/zerosumstudio/drift/main/.github/assets/zerosum-on-light.png" alt="" height="32"></picture> Drift
+# <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zerosumstudio/drift/main/.github/assets/zerosum-on-dark.png"><img src="https://raw.githubusercontent.com/zerosumstudio/drift/main/.github/assets/zerosum-on-light.png" alt="" height="32"></picture> drift
 
 [![npm version](https://badge.fury.io/js/@zerosumstudio%2Fdrift.svg)](https://badge.fury.io/js/@zerosumstudio%2Fdrift)
 [![Release](https://github.com/zerosumstudio/drift/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/zerosumstudio/drift/actions/workflows/release.yml)
