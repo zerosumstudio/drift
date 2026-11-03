@@ -1,8 +1,8 @@
 # Drift
 
-[![Release](https://github.com/bkincz/drift/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/bkincz/drift/actions/workflows/release.yml)
-[![codecov](https://codecov.io/gh/bkincz/drift/branch/main/graph/badge.svg)](https://codecov.io/gh/bkincz/drift)
-[![npm version](https://badge.fury.io/js/@bkincz%2Fdrift.svg)](https://badge.fury.io/js/@bkincz%2Fdrift)
+[![Release](https://github.com/zerosumstudio/drift/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/zerosumstudio/drift/actions/workflows/release.yml)
+[![codecov](https://codecov.io/gh/zerosumstudio/drift/branch/main/graph/badge.svg)](https://codecov.io/gh/zerosumstudio/drift)
+[![npm version](https://badge.fury.io/js/@zerosumstudio%2Fdrift.svg)](https://badge.fury.io/js/@zerosumstudio%2Fdrift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A DOM-driven form library that automatically tracks forms and fields based on their presence in the DOM.
@@ -10,8 +10,10 @@ A DOM-driven form library that automatically tracks forms and fields based on th
 Zero runtime dependencies and no peers.
 
 ```bash
-npm install @bkincz/drift
+npm install @zerosumstudio/drift
 ```
+
+Up to 1.4.0 this was published as `@bkincz/drift`. Swap the package name and the imports, the API is the same.
 
 ## Quick Start
 
@@ -32,7 +34,7 @@ npm install @bkincz/drift
 > ```
 
 ```typescript
-import { Drift } from '@bkincz/drift'
+import { Drift } from '@zerosumstudio/drift'
 
 const drift = new Drift()
 drift.observe(document.body)
@@ -295,7 +297,7 @@ import type {
   DriftFieldSchema,
   DriftResetHandler,
   ValidationResult,
-} from '@bkincz/drift'
+} from '@zerosumstudio/drift'
 ```
 
 ## License

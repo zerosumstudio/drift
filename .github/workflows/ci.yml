@@ -122,13 +122,13 @@ jobs:
                   mkdir -p consumer && cd consumer
                   npm init -y > /dev/null
                   npm pkg set type=module
-                  npm install "$RUNNER_TEMP"/bkincz-drift-*.tgz
+                  npm install "$RUNNER_TEMP"/zerosumstudio-drift-*.tgz
 
             - name: Import every export, ESM and CJS
               working-directory: ${{ runner.temp }}/consumer
               run: |
                   node --input-type=module -e '
-                    const { Drift, DriftStore, setNestedValue, getNestedValue } = await import("@bkincz/drift")
+                    const { Drift, DriftStore, setNestedValue, getNestedValue } = await import("@zerosumstudio/drift")
 
                     new Drift()
 
@@ -142,7 +142,7 @@ jobs:
                     }
                   '
                   node -e '
-                    const drift = require("@bkincz/drift")
+                    const drift = require("@zerosumstudio/drift")
                     if (typeof drift.Drift !== "function") throw new Error("no Drift export from CJS")
                   '
 
@@ -159,7 +159,7 @@ jobs:
                       type DriftFormState,
                       type DriftSchema,
                       type ValidationResult,
-                  } from '@bkincz/drift'
+                  } from '@zerosumstudio/drift'
 
                   const drift = new Drift({ defaultValidateOn: 'blur' })
                   const store = new DriftStore({ initialState: { forms: {} } })

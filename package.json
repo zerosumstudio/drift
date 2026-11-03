@@ -1,18 +1,18 @@
 {
-  "name": "@bkincz/drift",
+  "name": "@zerosumstudio/drift",
   "version": "1.4.0",
   "type": "module",
   "description": "A DOM-driven form library that automatically tracks forms and fields based on their presence in the DOM.",
-  "author": "Benjamin Kinczel <beni.kinczel@gmail.com>",
+  "author": "zerosum studio <hello@zerosum.studio>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bkincz/drift.git"
+    "url": "https://github.com/zerosumstudio/drift.git"
   },
   "bugs": {
-    "url": "https://github.com/bkincz/drift/issues"
+    "url": "https://github.com/zerosumstudio/drift/issues"
   },
-  "homepage": "https://github.com/bkincz/drift#readme",
+  "homepage": "https://github.com/zerosumstudio/drift#readme",
   "main": "./dist/drift.umd.cjs",
   "module": "./dist/drift.js",
   "types": "./dist/index.d.ts",
