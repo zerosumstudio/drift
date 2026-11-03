@@ -9,10 +9,17 @@ on:
 permissions:
     contents: read
 
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
     test:
         name: Test
         runs-on: ${{ matrix.os }}
+        permissions:
+            contents: read
+            id-token: write
         strategy:
             fail-fast: false
             matrix:
@@ -21,13 +28,13 @@ jobs:
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v7
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Setup pnpm
-              uses: pnpm/action-setup@v6
+              uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
             - name: Setup Node.js ${{ matrix.node-version }}
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version: ${{ matrix.node-version }}
                   cache: 'pnpm'
@@ -49,9 +56,10 @@ jobs:
 
             - name: Upload coverage to Codecov
               if: matrix.os == 'ubuntu-latest' && matrix.node-version == 24
-              uses: codecov/codecov-action@v7
+              uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
               with:
-                  token: ${{ secrets.CODECOV_TOKEN }}
+                  use_oidc: true
+                  disable_search: true
                   files: ./coverage/lcov.info
                   fail_ci_if_error: false
 
@@ -62,13 +70,13 @@ jobs:
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v7
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Setup pnpm
-              uses: pnpm/action-setup@v6
+              uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
             - name: Setup Node.js
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version: 24
                   cache: 'pnpm'
@@ -83,7 +91,7 @@ jobs:
               run: pnpm run size
 
             - name: Upload build artifacts
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                   name: dist
                   path: dist
@@ -96,13 +104,13 @@ jobs:
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v7
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Setup pnpm
-              uses: pnpm/action-setup@v6
+              uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
             - name: Setup Node.js
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version: 24
                   cache: 'pnpm'
@@ -122,13 +130,13 @@ jobs:
                   mkdir -p consumer && cd consumer
                   npm init -y > /dev/null
                   npm pkg set type=module
-                  npm install "$RUNNER_TEMP"/bkincz-drift-*.tgz
+                  npm install "$RUNNER_TEMP"/zerosumstudio-drift-*.tgz
 
             - name: Import every export, ESM and CJS
               working-directory: ${{ runner.temp }}/consumer
               run: |
                   node --input-type=module -e '
-                    const { Drift, DriftStore, setNestedValue, getNestedValue } = await import("@bkincz/drift")
+                    const { Drift, DriftStore, setNestedValue, getNestedValue } = await import("@zerosumstudio/drift")
 
                     new Drift()
 
@@ -142,14 +150,14 @@ jobs:
                     }
                   '
                   node -e '
-                    const drift = require("@bkincz/drift")
+                    const drift = require("@zerosumstudio/drift")
                     if (typeof drift.Drift !== "function") throw new Error("no Drift export from CJS")
                   '
 
             - name: Type-check against the tarball
               working-directory: ${{ runner.temp }}/consumer
               run: |
-                  npm install typescript@5 @types/node
+                  npm install typescript@6 @types/node
                   cat > index.ts <<'TS'
                   import {
                       Drift,
@@ -159,7 +167,7 @@ jobs:
                       type DriftFormState,
                       type DriftSchema,
                       type ValidationResult,
-                  } from '@bkincz/drift'
+                  } from '@zerosumstudio/drift'
 
                   const drift = new Drift({ defaultValidateOn: 'blur' })
                   const store = new DriftStore({ initialState: { forms: {} } })
@@ -178,3 +186,13 @@ jobs:
                   ]
                   TS
                   npx tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --lib es2022,dom index.ts
+
+            - name: Type-check the CommonJS types against the tarball
+              working-directory: ${{ runner.temp }}/consumer
+              run: |
+                  cat > index.cts <<'TS'
+                  import drift = require('@zerosumstudio/drift')
+
+                  export type Exports = [typeof drift.Drift, typeof drift.DriftStore, typeof drift.getInputs]
+                  TS
+                  npx tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --lib es2022,dom index.cts

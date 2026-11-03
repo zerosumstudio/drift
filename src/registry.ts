@@ -61,7 +61,7 @@ export class SchemaRegistry {
 		formKey: string,
 		fieldName: string,
 		value: unknown,
-		allValues: Record<string, unknown>
+		allValues: Record<string, unknown>,
 	): Promise<ValidationResult> {
 		const schema = this.schemas.get(formKey)
 		if (!schema?.fields?.[fieldName]) {
@@ -77,7 +77,7 @@ export class SchemaRegistry {
 	 */
 	async validateForm(
 		formKey: string,
-		values: Record<string, unknown>
+		values: Record<string, unknown>,
 	): Promise<ValidationResult> {
 		const schema = this.schemas.get(formKey)
 		if (!schema?.validate) {
