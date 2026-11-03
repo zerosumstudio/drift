@@ -14,7 +14,7 @@ export type ValidationTrigger = 'blur' | 'change' | { debounce: number }
 export interface DriftFieldSchema {
 	validate: (
 		value: unknown,
-		allValues: Record<string, unknown>
+		allValues: Record<string, unknown>,
 	) => ValidationResult | Promise<ValidationResult>
 	validateOn?: ValidationTrigger
 	transform?: (value: unknown) => unknown
@@ -68,7 +68,7 @@ export type DriftInputElement = HTMLInputElement | HTMLTextAreaElement | HTMLSel
  ***************************************************************************************************/
 export type DriftSubmitHandler = (
 	values: Record<string, unknown>,
-	formKey: string
+	formKey: string,
 ) => void | Promise<void>
 
 export type DriftResetHandler = () => void | Promise<void>

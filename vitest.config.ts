@@ -2,7 +2,6 @@
  *   IMPORTS
  ***************************************************************************************************/
 import { defineConfig } from 'vitest/config'
-import { resolve } from 'path'
 
 /*
  *   VITEST CONFIG
@@ -33,11 +32,6 @@ export default defineConfig({
 				'**/*.d.ts',
 				'**/*.config.*',
 			],
-		},
-	},
-	resolve: {
-		alias: {
-			'@': resolve('./src'),
 		},
 	},
 })

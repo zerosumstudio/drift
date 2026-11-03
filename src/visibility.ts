@@ -23,13 +23,13 @@ function claimedByNested(container: Element, formAttribute: string): Set<Element
 export function getInputs(
 	container: Element,
 	hiddenAttribute = 'data-drift-hidden',
-	formAttribute = 'data-drift-form'
+	formAttribute = 'data-drift-form',
 ): DriftInputElement[] {
 	const inputs = container.querySelectorAll<DriftInputElement>(FIELDS)
 	const claimed = claimedByNested(container, formAttribute)
 
 	return Array.from(inputs).filter(
-		input => input.name && !input.hasAttribute(hiddenAttribute) && !claimed.has(input)
+		input => input.name && !input.hasAttribute(hiddenAttribute) && !claimed.has(input),
 	)
 }
 

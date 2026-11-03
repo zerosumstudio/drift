@@ -96,7 +96,7 @@ export class Drift {
 				formAttribute: this.config.formAttribute,
 				hiddenAttribute: this.config.hiddenAttribute,
 				debounceMs: this.config.observerDebounce,
-			}
+			},
 		)
 	}
 
@@ -162,7 +162,7 @@ export class Drift {
 			draft.forms[formKey].values = setNestedValue(
 				draft.forms[formKey].values,
 				fieldName,
-				value
+				value,
 			) as Record<string, unknown>
 			draft.forms[formKey].dirty[fieldName] = true
 		})
@@ -186,7 +186,7 @@ export class Drift {
 				draft.forms[formKey].values = setNestedValue(
 					draft.forms[formKey].values,
 					fieldName,
-					value
+					value,
 				) as Record<string, unknown>
 				draft.forms[formKey].dirty[fieldName] = true
 			}
@@ -287,7 +287,7 @@ export class Drift {
 				draft.forms[formKey].values = setNestedValue(
 					draft.forms[formKey].values,
 					fieldName,
-					value
+					value,
 				) as Record<string, unknown>
 				delete draft.forms[formKey].dirty[fieldName]
 			}
@@ -615,7 +615,7 @@ export class Drift {
 					draft.forms[formKey].values = setNestedValue(
 						draft.forms[formKey].values,
 						name,
-						value
+						value,
 					) as Record<string, unknown>
 				} else if (!isEmpty(existingValue)) {
 					const el = fieldMap.get(name)
@@ -668,7 +668,7 @@ export class Drift {
 	private attachFieldListeners(
 		field: DriftInputElement,
 		formKey: string,
-		fieldName: string
+		fieldName: string,
 	): void {
 		const isRadio = field instanceof HTMLInputElement && field.type === 'radio'
 
@@ -696,7 +696,7 @@ export class Drift {
 				draft.forms[formKey].values = setNestedValue(
 					draft.forms[formKey].values,
 					fieldName,
-					value
+					value,
 				) as Record<string, unknown>
 				draft.forms[formKey].dirty[fieldName] = true
 			})
@@ -734,7 +734,7 @@ export class Drift {
 	private triggerFieldValidation(
 		formKey: string,
 		fieldName: string,
-		eventType: 'change' | 'blur'
+		eventType: 'change' | 'blur',
 	): void {
 		const fieldSchema = this.registry.getFieldSchema(formKey, fieldName)
 		const trigger = fieldSchema?.validateOn ?? this.config.defaultValidateOn
@@ -768,7 +768,7 @@ export class Drift {
 	private setInputValueInternal(
 		element: DriftInputElement,
 		value: unknown,
-		formKey?: string
+		formKey?: string,
 	): void {
 		if (formKey && element instanceof HTMLInputElement && element.type === 'radio') {
 			const group = this.radioGroups.get(formKey)?.get(element.name)
@@ -807,7 +807,7 @@ export class Drift {
 				nativeSet.call(field, newValue)
 				if (oldValue !== newValue && !this.suppressedElements.has(field)) {
 					field.dispatchEvent(
-						new Event(isCheckable ? 'change' : 'input', { bubbles: true })
+						new Event(isCheckable ? 'change' : 'input', { bubbles: true }),
 					)
 				}
 			},

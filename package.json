@@ -1,81 +1,98 @@
 {
-  "name": "@zerosumstudio/drift",
-  "version": "1.4.0",
-  "type": "module",
-  "description": "A DOM-driven form library that automatically tracks forms and fields based on their presence in the DOM.",
-  "author": "zerosum studio <hello@zerosum.studio>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/zerosumstudio/drift.git"
-  },
-  "bugs": {
-    "url": "https://github.com/zerosumstudio/drift/issues"
-  },
-  "homepage": "https://github.com/zerosumstudio/drift#readme",
-  "main": "./dist/drift.umd.cjs",
-  "module": "./dist/drift.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/drift.js",
-      "require": "./dist/drift.umd.cjs"
-    }
-  },
-  "files": [
-    "dist"
-  ],
-  "sideEffects": false,
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview",
-    "type-check": "tsc --noEmit",
-    "test": "vitest",
-    "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "size": "size-limit",
-    "verify": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test:coverage && pnpm run build && pnpm run size",
-    "prepublishOnly": "pnpm run verify"
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@size-limit/preset-small-lib": "^13.0.3",
-    "@types/node": "^26.2.0",
-    "@vitest/coverage-v8": "^4.1.10",
-    "eslint": "^10.8.1",
-    "globals": "^17.9.0",
-    "happy-dom": "^20.11.2",
-    "jsdom": "^30.0.1",
-    "prettier": "^3.9.6",
-    "size-limit": "^13.0.3",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.66.0",
-    "vite": "npm:rolldown-vite@7.3.1",
-    "vite-plugin-dts": "^5.0.3",
-    "vitest": "^4.1.10"
-  },
-  "size-limit": [
-    {
-      "name": "ESM bundle",
-      "path": "dist/drift.js",
-      "limit": "7 KB"
-    },
-    {
-      "name": "UMD bundle",
-      "path": "dist/drift.umd.cjs",
-      "limit": "7 KB"
-    }
-  ],
-  "publishConfig": {
-    "access": "public"
-  },
-  "engines": {
-    "node": ">=22.12.0"
-  },
-  "packageManager": "pnpm@11.6.0"
+	"name": "@zerosumstudio/drift",
+	"version": "1.4.0",
+	"description": "A DOM-driven form library that tracks forms and fields by their presence in the DOM",
+	"keywords": [
+		"form",
+		"forms",
+		"dom",
+		"form-state",
+		"form-validation",
+		"validation",
+		"typescript",
+		"vanilla-js"
+	],
+	"homepage": "https://github.com/zerosumstudio/drift#readme",
+	"bugs": {
+		"url": "https://github.com/zerosumstudio/drift/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/zerosumstudio/drift.git"
+	},
+	"license": "MIT",
+	"author": "zerosum studio <hello@zerosum.studio>",
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		}
+	},
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"build": "tsup",
+		"dev": "tsup --watch",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix",
+		"prepublishOnly": "pnpm run verify",
+		"size": "size-limit",
+		"test": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"test:run": "vitest run",
+		"type-check": "tsc --noEmit && tsc -p tsconfig.tools.json --noEmit",
+		"verify": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test:coverage && pnpm run build && pnpm run size"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@size-limit/preset-small-lib": "^13.0.3",
+		"@types/node": "^26.2.0",
+		"@vitest/coverage-v8": "^4.1.10",
+		"eslint": "^10.8.1",
+		"globals": "^17.9.0",
+		"happy-dom": "^20.11.2",
+		"jsdom": "^30.0.1",
+		"prettier": "^3.9.6",
+		"size-limit": "^13.0.3",
+		"tsup": "^8.5.1",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.66.0",
+		"vitest": "^4.1.10"
+	},
+	"packageManager": "pnpm@11.6.0",
+	"engines": {
+		"node": ">=22.12.0"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"size-limit": [
+		{
+			"name": "ESM bundle",
+			"path": "dist/index.js",
+			"limit": "7 KB"
+		},
+		{
+			"name": "CJS bundle",
+			"path": "dist/index.cjs",
+			"limit": "7 KB"
+		}
+	]
 }

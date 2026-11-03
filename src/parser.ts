@@ -60,7 +60,7 @@ export function parseFieldName(fieldName: string): PathSegment[] {
 export function setValueByPath(
 	obj: Record<string, unknown>,
 	path: PathSegment[],
-	value: unknown
+	value: unknown,
 ): Record<string, unknown> {
 	if (path.length === 0) {
 		return obj
@@ -140,7 +140,7 @@ export function getValueByPath(obj: Record<string, unknown>, path: PathSegment[]
 export function setNestedValue(
 	obj: Record<string, unknown>,
 	fieldName: string,
-	value: unknown
+	value: unknown,
 ): Record<string, unknown> {
 	const path = parseFieldName(fieldName)
 	return setValueByPath(obj, path, value)
@@ -159,7 +159,7 @@ export function getNestedValue(obj: Record<string, unknown>, fieldName: string):
  */
 export function deleteNestedValue(
 	obj: Record<string, unknown>,
-	fieldName: string
+	fieldName: string,
 ): Record<string, unknown> {
 	const path = parseFieldName(fieldName)
 	if (path.length === 0) {

@@ -560,7 +560,7 @@ describe('Drift - Event Listeners', () => {
 				formKey: 'testForm',
 				fieldName: 'email',
 				value: 'test@example.com',
-			})
+			}),
 		)
 	})
 
@@ -828,7 +828,7 @@ describe('Drift - Initial Values', () => {
 		await drift.resetForm('testForm')
 
 		expect(listener).toHaveBeenCalledWith(
-			expect.objectContaining({ type: 'form:reset', formKey: 'testForm' })
+			expect.objectContaining({ type: 'form:reset', formKey: 'testForm' }),
 		)
 	})
 })
