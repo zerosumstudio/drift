@@ -1,6 +1,6 @@
 {
 	"name": "@zerosumstudio/drift",
-	"version": "1.4.0",
+	"version": "1.0.0",
 	"description": "A DOM-driven form library that tracks forms and fields by their presence in the DOM",
 	"keywords": [
 		"form",
@@ -26,58 +26,55 @@
 	"type": "module",
 	"exports": {
 		".": {
-			"import": {
-				"types": "./dist/index.d.ts",
-				"default": "./dist/index.js"
-			},
-			"require": {
-				"types": "./dist/index.d.cts",
-				"default": "./dist/index.cjs"
-			}
-		}
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./track": {
+			"types": "./dist/track.d.ts",
+			"default": "./dist/track.js"
+		},
+		"./package.json": "./package.json"
 	},
-	"main": "./dist/index.cjs",
-	"module": "./dist/index.js",
+	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [
 		"dist",
-		"README.md",
-		"LICENSE"
+		"docs/migration-1.0.md"
 	],
 	"scripts": {
-		"build": "tsup",
-		"dev": "tsup --watch",
+		"build": "tsdown",
+		"dev": "tsdown --watch",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
 		"prepublishOnly": "pnpm run verify",
 		"size": "size-limit",
-		"test": "vitest",
+		"smoke": "node scripts/smoke.mjs",
+		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
-		"test:run": "vitest run",
+		"test:watch": "vitest",
 		"type-check": "tsc --noEmit && tsc -p tsconfig.tools.json --noEmit",
-		"verify": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test:coverage && pnpm run build && pnpm run size"
+		"verify": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test:coverage && pnpm run build && pnpm run size && pnpm run smoke"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
-		"@size-limit/preset-small-lib": "^13.0.3",
-		"@types/node": "^26.2.0",
-		"@vitest/coverage-v8": "^4.1.10",
-		"eslint": "^10.8.1",
-		"globals": "^17.9.0",
-		"happy-dom": "^20.11.2",
-		"jsdom": "^30.0.1",
-		"prettier": "^3.9.6",
-		"size-limit": "^13.0.3",
-		"tsup": "^8.5.1",
+		"@size-limit/preset-small-lib": "^14.3.0",
+		"@types/node": "^26.6.6",
+		"@vitest/coverage-v8": "^5.1.1",
+		"eslint": "^10.15.0",
+		"globals": "^17.14.0",
+		"jsdom": "^31.0.1",
+		"prettier": "^3.10.1",
+		"size-limit": "^14.3.0",
+		"tsdown": "^0.23.7",
 		"typescript": "^6.0.3",
-		"typescript-eslint": "^8.66.0",
-		"vitest": "^4.1.10"
+		"typescript-eslint": "^8.73.0",
+		"vitest": "^5.1.1"
 	},
 	"packageManager": "pnpm@11.6.0",
 	"engines": {
-		"node": ">=22.12.0"
+		"node": ">=26"
 	},
 	"publishConfig": {
 		"access": "public",
@@ -87,12 +84,12 @@
 		{
 			"name": "ESM bundle",
 			"path": "dist/index.js",
-			"limit": "7 KB"
+			"limit": "9.2 KB"
 		},
 		{
-			"name": "CJS bundle",
-			"path": "dist/index.cjs",
-			"limit": "7 KB"
+			"name": "track subpath",
+			"path": "dist/track.js",
+			"limit": "400 B"
 		}
 	]
 }
