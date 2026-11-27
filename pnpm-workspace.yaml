@@ -3,7 +3,6 @@ allowBuilds:
 
 overrides:
     esbuild: '>=0.28.1'
-    rollup: '>=4.59.0'
 
 # 3 days, in minutes.
 minimumReleaseAge: 4320

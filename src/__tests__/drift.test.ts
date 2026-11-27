@@ -1,1383 +1,630 @@
 /*
  *   IMPORTS
  ***************************************************************************************************/
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { Drift } from '../drift.js'
-import type { DriftSchema } from '../types.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Drift, DriftError } from '../drift.js'
+import { blur, change, flush, focus, mount, query, setup, type } from './helpers.js'
 
 /*
- *   TEST SETUP
+ *   TESTS
  ***************************************************************************************************/
-let drift: Drift
-let container: HTMLDivElement
-
-beforeEach(() => {
-	container = document.createElement('div')
-	document.body.appendChild(container)
-	drift = new Drift()
-})
-
 afterEach(() => {
-	drift.disconnect()
-	document.body.removeChild(container)
+	vi.restoreAllMocks()
 })
 
-/*
- *   HELPER FUNCTIONS
- ***************************************************************************************************/
-async function waitForMutations(): Promise<void> {
-	await new Promise(resolve => setTimeout(resolve, 50))
-}
+describe('tracking', () => {
+	it('registers forms and fields that are in the DOM', () => {
+		const { drift } = setup(`
+			<form data-drift-form="login">
+				<input name="email" value="a@b.c">
+				<input name="user.name" value="Ada">
+				<input name="items[0].id" value="7">
+			</form>
+		`)
 
-function createForm(formKey: string, fields: string[] = []): HTMLFormElement {
-	const form = document.createElement('form')
-	form.setAttribute('data-drift-form', formKey)
-
-	fields.forEach(name => {
-		const input = document.createElement('input')
-		input.name = name
-		input.type = 'text'
-		form.appendChild(input)
-	})
-
-	return form
-}
-
-function triggerInput(input: HTMLInputElement, value: string): void {
-	input.value = value
-	input.dispatchEvent(new Event('input', { bubbles: true }))
-}
-
-function triggerBlur(input: HTMLInputElement): void {
-	input.dispatchEvent(new Event('blur', { bubbles: true }))
-}
-
-/*
- *   INITIALIZATION TESTS
- ***************************************************************************************************/
-describe('Drift - Initialization', () => {
-	it('creates instance with default config', () => {
-		expect(drift).toBeInstanceOf(Drift)
-	})
-
-	it('creates instance with custom config', () => {
-		const customDrift = new Drift({
-			formAttribute: 'data-custom-form',
-			persist: false,
-		})
-		expect(customDrift).toBeInstanceOf(Drift)
-		customDrift.disconnect()
-	})
-
-	it('starts observing the DOM', async () => {
-		const form = createForm('testForm')
-		container.appendChild(form)
-
-		drift.observe(container)
-		await waitForMutations()
-
-		expect(drift.getForm('testForm')).toBeDefined()
-	})
-})
-
-/*
- *   FORM STATE TESTS
- ***************************************************************************************************/
-describe('Drift - Form State', () => {
-	it('creates initial form state when form is detected', async () => {
-		const form = createForm('testForm')
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-
-		const state = drift.getForm('testForm')
-		expect(state).toEqual({
-			values: {},
-			errors: {},
-			touched: {},
-			dirty: {},
-			isValid: true,
-			isSubmitting: false,
-			isValidating: false,
-			initialValues: {},
-			hasBeenValidated: false,
-			canSubmit: false,
-			validatingFields: {},
+		expect(drift.form('login').getState().values).toEqual({
+			email: 'a@b.c',
+			user: { name: 'Ada' },
+			items: [{ id: '7' }],
 		})
 	})
 
-	it('returns undefined for non-existent form', () => {
-		expect(drift.getForm('nonexistent')).toBeUndefined()
-	})
-
-	it('returns all forms', async () => {
-		const form1 = createForm('form1')
-		const form2 = createForm('form2')
-		container.appendChild(form1)
-		container.appendChild(form2)
-		drift.observe(container)
-		await waitForMutations()
-
-		const forms = drift.getAllForms()
-		expect(Object.keys(forms)).toEqual(['form1', 'form2'])
-	})
-
-	it('captures initial field values', async () => {
-		const form = createForm('testForm')
-		const input = document.createElement('input')
-		input.name = 'username'
-		input.type = 'text'
-		input.value = 'initialValue'
-		form.appendChild(input)
-		container.appendChild(form)
-
-		drift.observe(container)
-		await waitForMutations()
-
-		expect(drift.getValue('testForm', 'username')).toBe('initialValue')
-	})
-})
-
-/*
- *   VALUE OPERATIONS TESTS
- ***************************************************************************************************/
-describe('Drift - Value Operations', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email', 'password'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('sets a value programmatically', () => {
-		drift.setValue('testForm', 'email', 'test@example.com')
-		expect(drift.getValue('testForm', 'email')).toBe('test@example.com')
-	})
-
-	it('marks field as dirty when value is set', () => {
-		drift.setValue('testForm', 'email', 'test@example.com')
-		expect(drift.isDirty('testForm', 'email')).toBe(true)
-	})
-
-	it('updates DOM element when value is set', () => {
-		drift.setValue('testForm', 'email', 'test@example.com')
-		const input = container.querySelector('input[name="email"]') as HTMLInputElement
-		expect(input.value).toBe('test@example.com')
-	})
-
-	it('sets multiple values at once', () => {
-		drift.setValues('testForm', {
-			email: 'test@example.com',
-			password: 'secret123',
-		})
-		expect(drift.getValue('testForm', 'email')).toBe('test@example.com')
-		expect(drift.getValue('testForm', 'password')).toBe('secret123')
-	})
-
-	it('returns undefined for non-existent field', () => {
-		expect(drift.getValue('testForm', 'nonexistent')).toBeUndefined()
-	})
-
-	it('handles nested field names', () => {
-		drift.setValue('testForm', 'user.profile.name', 'John')
-		expect(drift.getValue('testForm', 'user.profile.name')).toBe('John')
-	})
-})
-
-/*
- *   INPUT EVENT TESTS
- ***************************************************************************************************/
-describe('Drift - Input Events', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('captures input changes', () => {
-		const input = container.querySelector('input[name="email"]') as HTMLInputElement
-		triggerInput(input, 'typed@example.com')
-
-		expect(drift.getValue('testForm', 'email')).toBe('typed@example.com')
-	})
-
-	it('marks field as dirty on input', () => {
-		const input = container.querySelector('input[name="email"]') as HTMLInputElement
-		triggerInput(input, 'typed@example.com')
-
-		expect(drift.isDirty('testForm', 'email')).toBe(true)
-	})
-
-	it('marks field as touched on blur', () => {
-		const input = container.querySelector('input[name="email"]') as HTMLInputElement
-		triggerBlur(input)
-
-		expect(drift.isTouched('testForm', 'email')).toBe(true)
-	})
-
-	it('reports form as dirty when any field is dirty', () => {
-		const input = container.querySelector('input[name="email"]') as HTMLInputElement
-		triggerInput(input, 'value')
-
-		expect(drift.isFormDirty('testForm')).toBe(true)
-	})
-
-	it('reports form as not dirty initially', () => {
-		expect(drift.isFormDirty('testForm')).toBe(false)
-	})
-})
-
-/*
- *   ERROR HANDLING TESTS
- ***************************************************************************************************/
-describe('Drift - Error Handling', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('sets errors for a field', () => {
-		drift.setErrors('testForm', {
-			email: ['Invalid email', 'Email is required'],
-		})
-
-		expect(drift.getErrors('testForm', 'email')).toEqual(['Invalid email', 'Email is required'])
-	})
-
-	it('marks form as invalid when errors exist', () => {
-		drift.setErrors('testForm', {
-			email: ['Invalid email'],
-		})
-
-		const state = drift.getForm('testForm')
-		expect(state?.isValid).toBe(false)
-	})
-
-	it('clears all errors for a form', () => {
-		drift.setErrors('testForm', {
-			email: ['Error 1'],
-		})
-		drift.clearErrors('testForm')
-
-		expect(drift.getAllErrors('testForm')).toEqual({})
-	})
-
-	it('clears errors for a specific field', () => {
-		drift.setErrors('testForm', {
-			email: ['Error 1'],
-		})
-		drift.clearErrors('testForm', 'email')
-
-		expect(drift.getErrors('testForm', 'email')).toEqual([])
-	})
-
-	it('returns empty array for field without errors', () => {
-		expect(drift.getErrors('testForm', 'email')).toEqual([])
-	})
-
-	it('returns empty object for form without errors', () => {
-		expect(drift.getAllErrors('testForm')).toEqual({})
-	})
-})
-
-/*
- *   VALIDATION TESTS
- ***************************************************************************************************/
-describe('Drift - Validation', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email', 'password'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('validates a field with schema', async () => {
-		const schema: DriftSchema = {
-			fields: {
-				email: {
-					validate: value => ({
-						success: typeof value === 'string' && value.includes('@'),
-						errors:
-							typeof value === 'string' && value.includes('@')
-								? undefined
-								: { email: ['Invalid email format'] },
-					}),
-					validateOn: 'blur',
-				},
-			},
-		}
-		drift.registerSchema('testForm', schema)
-		drift.setValue('testForm', 'email', 'invalid')
-
-		const isValid = await drift.validateField('testForm', 'email')
-
-		expect(isValid).toBe(false)
-		expect(drift.getErrors('testForm', 'email')).toContain('Invalid email format')
-	})
-
-	it('validates entire form', async () => {
-		const schema: DriftSchema = {
-			validate: values => {
-				const errors: Record<string, string[]> = {}
-				if (!values.email) {
-					errors.email = ['Email is required']
-				}
-				if (!values.password) {
-					errors.password = ['Password is required']
-				}
-				return {
-					success: Object.keys(errors).length === 0,
-					errors: Object.keys(errors).length > 0 ? errors : undefined,
-				}
-			},
-		}
-		drift.registerSchema('testForm', schema)
-
-		const isValid = await drift.validateForm('testForm')
-
-		expect(isValid).toBe(false)
-		expect(drift.getErrors('testForm', 'email')).toContain('Email is required')
-	})
-
-	it('clears errors when field becomes valid', async () => {
-		const schema: DriftSchema = {
-			fields: {
-				email: {
-					validate: value => ({
-						success: typeof value === 'string' && value.includes('@'),
-						errors:
-							typeof value === 'string' && value.includes('@')
-								? undefined
-								: { email: ['Invalid email'] },
-					}),
-					validateOn: 'blur',
-				},
-			},
-		}
-		drift.registerSchema('testForm', schema)
-		drift.setValue('testForm', 'email', 'invalid')
-		await drift.validateField('testForm', 'email')
-
-		drift.setValue('testForm', 'email', 'valid@example.com')
-		await drift.validateField('testForm', 'email')
-
-		expect(drift.getErrors('testForm', 'email')).toEqual([])
-	})
-
-	it('returns true for form without schema', async () => {
-		const isValid = await drift.validateForm('testForm')
-		expect(isValid).toBe(true)
-	})
-
-	it('unregisters schema', async () => {
-		const schema: DriftSchema = {
-			validate: () => ({ success: false, errors: { email: ['Error'] } }),
-		}
-		drift.registerSchema('testForm', schema)
-		drift.unregisterSchema('testForm')
-
-		const isValid = await drift.validateForm('testForm')
-		expect(isValid).toBe(true)
-	})
-})
-
-/*
- *   FORM SUBMISSION TESTS
- ***************************************************************************************************/
-describe('Drift - Form Submission', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('calls submit handler on successful submission', async () => {
-		const handler = vi.fn()
-		drift.onSubmit('testForm', handler)
-		drift.setValue('testForm', 'email', 'test@example.com')
-
-		await drift.submit('testForm')
-
-		expect(handler).toHaveBeenCalledWith({ email: 'test@example.com' }, 'testForm')
-	})
-
-	it('does not call handler when validation fails', async () => {
-		const handler = vi.fn()
-		const schema: DriftSchema = {
-			validate: () => ({ success: false, errors: { email: ['Required'] } }),
-		}
-		drift.registerSchema('testForm', schema)
-		drift.onSubmit('testForm', handler)
-
-		await drift.submit('testForm')
-
-		expect(handler).not.toHaveBeenCalled()
-	})
-
-	it('sets isSubmitting during submission', async () => {
-		let stateWhileSubmitting: boolean | undefined
-		const handler = vi.fn(async () => {
-			stateWhileSubmitting = drift.getForm('testForm')?.isSubmitting
-			await new Promise(resolve => setTimeout(resolve, 10))
-		})
-		drift.onSubmit('testForm', handler)
-
-		await drift.submit('testForm')
-
-		expect(stateWhileSubmitting).toBe(true)
-		expect(drift.getForm('testForm')?.isSubmitting).toBe(false)
-	})
-
-	it('returns false when form does not exist', async () => {
-		const result = await drift.submit('nonexistent')
-		expect(result).toBe(false)
-	})
-
-	it('unsubscribes submit handler', async () => {
-		const handler = vi.fn()
-		const unsubscribe = drift.onSubmit('testForm', handler)
-		unsubscribe()
-
-		await drift.submit('testForm')
-
-		expect(handler).not.toHaveBeenCalled()
-	})
-
-	it('handles submit handler errors gracefully', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-		const handler = vi.fn().mockRejectedValue(new Error('Handler error'))
-		drift.onSubmit('testForm', handler)
-
-		await drift.submit('testForm')
-
-		expect(consoleSpy).toHaveBeenCalled()
-		consoleSpy.mockRestore()
-	})
-})
-
-/*
- *   FORM RESET TESTS
- ***************************************************************************************************/
-describe('Drift - Form Reset', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email', 'password'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('resets form state', () => {
-		drift.setValue('testForm', 'email', 'test@example.com')
-		drift.setErrors('testForm', { email: ['Error'] })
-
-		drift.resetForm('testForm')
-
-		const state = drift.getForm('testForm')
-		expect(state?.values).toEqual({})
-		expect(state?.errors).toEqual({})
-		expect(state?.touched).toEqual({})
-		expect(state?.dirty).toEqual({})
-	})
-
-	it('clears DOM input values', () => {
-		const input = container.querySelector('input[name="email"]') as HTMLInputElement
-		input.value = 'test@example.com'
-
-		drift.resetForm('testForm')
-
-		expect(input.value).toBe('')
-	})
-})
-
-/*
- *   SUBSCRIPTION TESTS
- ***************************************************************************************************/
-describe('Drift - Subscriptions', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('subscribes to form state changes', () => {
-		const callback = vi.fn()
-		drift.subscribe('testForm', callback)
-
-		drift.setValue('testForm', 'email', 'test@example.com')
-
-		expect(callback).toHaveBeenCalled()
-	})
-
-	it('unsubscribes from form state changes', () => {
-		const callback = vi.fn()
-		const unsubscribe = drift.subscribe('testForm', callback)
-
-		// Clear any initial calls from subscription
-		callback.mockClear()
-
-		unsubscribe()
-
-		drift.setValue('testForm', 'email', 'test@example.com')
-
-		expect(callback).not.toHaveBeenCalled()
-	})
-
-	it('subscribes to all forms', () => {
-		const callback = vi.fn()
-		drift.subscribeAll(callback)
-
-		drift.setValue('testForm', 'email', 'test@example.com')
-
-		expect(callback).toHaveBeenCalled()
-	})
-})
-
-/*
- *   EVENT LISTENER TESTS
- ***************************************************************************************************/
-describe('Drift - Event Listeners', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('emits field:change event', () => {
-		const listener = vi.fn()
-		drift.on('field:change', listener)
-
-		drift.setValue('testForm', 'email', 'test@example.com')
-
-		expect(listener).toHaveBeenCalledWith(
-			expect.objectContaining({
-				type: 'field:change',
-				formKey: 'testForm',
-				fieldName: 'email',
-				value: 'test@example.com',
-			}),
-		)
-	})
-
-	it('emits validation:start and validation:end events', async () => {
-		const startListener = vi.fn()
-		const endListener = vi.fn()
-		drift.on('validation:start', startListener)
-		drift.on('validation:end', endListener)
-
-		await drift.validateForm('testForm')
-
-		expect(startListener).toHaveBeenCalled()
-		expect(endListener).toHaveBeenCalled()
-	})
-
-	it('emits submit:start and submit:end events', async () => {
-		const startListener = vi.fn()
-		const endListener = vi.fn()
-		drift.on('submit:start', startListener)
-		drift.on('submit:end', endListener)
-
-		await drift.submit('testForm')
-
-		expect(startListener).toHaveBeenCalled()
-		expect(endListener).toHaveBeenCalled()
-	})
-
-	it('supports wildcard event listener', () => {
-		const listener = vi.fn()
-		drift.on('*', listener)
-
-		drift.setValue('testForm', 'email', 'test@example.com')
-
-		expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: 'field:change' }))
-	})
-
-	it('removes event listener with off()', () => {
-		const listener = vi.fn()
-		drift.on('field:change', listener)
-		drift.off('field:change', listener)
-
-		drift.setValue('testForm', 'email', 'test@example.com')
-
-		expect(listener).not.toHaveBeenCalled()
-	})
-
-	it('removes event listener with returned unsubscribe function', () => {
-		const listener = vi.fn()
-		const unsubscribe = drift.on('field:change', listener)
-		unsubscribe()
-
-		drift.setValue('testForm', 'email', 'test@example.com')
-
-		expect(listener).not.toHaveBeenCalled()
-	})
-})
-
-/*
- *   PROGRAMMATIC REVALIDATION TESTS
- ***************************************************************************************************/
-describe('Drift - Programmatic Revalidation', () => {
-	let nameInput: HTMLInputElement
-	let keyInput: HTMLInputElement
-
-	const makeRequiredSchema = (validateOn: 'change' | 'blur'): DriftSchema => ({
-		validate: values => {
-			const errors: Record<string, string[]> = {}
-			if (!values.name) errors.name = ['Name is required']
-			if (!values.key) errors.key = ['Key is required']
-			return {
-				success: Object.keys(errors).length === 0,
-				errors: Object.keys(errors).length > 0 ? errors : undefined,
-			}
-		},
-		fields: {
-			name: {
-				validate: value => ({
-					success: typeof value === 'string' && value.length > 0,
-					errors:
-						typeof value === 'string' && value.length > 0
-							? undefined
-							: { name: ['Name is required'] },
-				}),
-				validateOn,
-			},
-			key: {
-				validate: value => ({
-					success: typeof value === 'string' && value.length > 0,
-					errors:
-						typeof value === 'string' && value.length > 0
-							? undefined
-							: { key: ['Key is required'] },
-				}),
-				validateOn,
-			},
-		},
-	})
-
-	beforeEach(async () => {
-		const form = document.createElement('form')
-		form.setAttribute('data-drift-form', 'testForm')
-
-		nameInput = document.createElement('input')
-		nameInput.name = 'name'
-		nameInput.type = 'text'
-
-		keyInput = document.createElement('input')
-		keyInput.name = 'key'
-		keyInput.type = 'text'
-
-		form.appendChild(nameInput)
-		form.appendChild(keyInput)
-		container.appendChild(form)
-
-		drift.observe(container)
-		await waitForMutations()
-	})
+	it('registers fields that are added later, through the observer', async () => {
+		const { drift, root } = setup('<form data-drift-form="f"></form>')
 
-	it('revalidates a linked field when its value is set programmatically after submission errors', async () => {
-		drift.registerSchema('testForm', makeRequiredSchema('change'))
-		nameInput.addEventListener('input', () => {
-			keyInput.value = nameInput.value.toLowerCase()
-		})
+		query(root, 'form').innerHTML = '<input name="late" value="x">'
+		await flush()
 
-		await drift.submit('testForm')
-		expect(drift.getErrors('testForm', 'name')).toContain('Name is required')
-		expect(drift.getErrors('testForm', 'key')).toContain('Key is required')
-
-		triggerInput(nameInput, 'Hello')
-		await waitForMutations()
-
-		expect(drift.getErrors('testForm', 'name')).toEqual([])
-		expect(drift.getErrors('testForm', 'key')).toEqual([])
-	})
-
-	it('revalidates a linked field even when its validateOn is blur', async () => {
-		drift.registerSchema('testForm', makeRequiredSchema('blur'))
-		nameInput.addEventListener('input', () => {
-			keyInput.value = nameInput.value.toLowerCase()
-		})
-
-		await drift.submit('testForm')
-		expect(drift.getErrors('testForm', 'key')).toContain('Key is required')
-
-		triggerInput(nameInput, 'Hello')
-		await waitForMutations()
-
-		expect(drift.getErrors('testForm', 'key')).toEqual([])
-	})
-
-	it('does not trigger validation when Drift internally sets a field value', async () => {
-		drift.registerSchema('testForm', makeRequiredSchema('change'))
-		await drift.submit('testForm')
-		expect(drift.getErrors('testForm', 'key')).toContain('Key is required')
-		const validateSpy = vi.spyOn(drift, 'validateField')
-
-		drift.setValue('testForm', 'key', 'my-key')
-		await waitForMutations()
-
-		expect(validateSpy).not.toHaveBeenCalled()
-		validateSpy.mockRestore()
-	})
-
-	it('revalidates on blur when a field has an existing error', async () => {
-		drift.registerSchema('testForm', makeRequiredSchema('change'))
-
-		await drift.submit('testForm')
-		expect(drift.getErrors('testForm', 'key')).toContain('Key is required')
-
-		triggerBlur(keyInput)
-		await waitForMutations()
-
-		expect(drift.getErrors('testForm', 'key')).toContain('Key is required')
-		keyInput.value = 'my-key'
-		triggerBlur(keyInput)
-		await waitForMutations()
-
-		expect(drift.getErrors('testForm', 'key')).toEqual([])
-	})
-
-	it('updates Drift state when a linked field value changes programmatically', async () => {
-		drift.registerSchema('testForm', makeRequiredSchema('change'))
-
-		nameInput.addEventListener('input', () => {
-			keyInput.value = nameInput.value.toLowerCase()
-		})
-
-		triggerInput(nameInput, 'MyProject')
-		await waitForMutations()
-
-		expect(drift.getValue('testForm', 'key')).toBe('myproject')
-	})
-})
-
-/*
- *   INITIAL VALUES TESTS
- ***************************************************************************************************/
-describe('Drift - Initial Values', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email', 'username'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('sets initial values and syncs to DOM', () => {
-		drift.setInitialValues('testForm', { email: 'hello@example.com', username: 'alice' })
-
-		expect(drift.getValue('testForm', 'email')).toBe('hello@example.com')
-		expect(drift.getValue('testForm', 'username')).toBe('alice')
-
-		const emailInput = container.querySelector('input[name="email"]') as HTMLInputElement
-		expect(emailInput.value).toBe('hello@example.com')
-	})
-
-	it('does not mark fields as dirty after setInitialValues', () => {
-		drift.setInitialValues('testForm', { email: 'hello@example.com' })
-
-		expect(drift.isDirty('testForm', 'email')).toBe(false)
-	})
-
-	it('marks field dirty after user input following setInitialValues', () => {
-		drift.setInitialValues('testForm', { email: 'hello@example.com' })
-		const input = container.querySelector('input[name="email"]') as HTMLInputElement
-		triggerInput(input, 'changed@example.com')
-
-		expect(drift.isDirty('testForm', 'email')).toBe(true)
-	})
-
-	it('resets form back to initial values, not empty', async () => {
-		drift.setInitialValues('testForm', { email: 'init@example.com' })
-
-		// User changes value and adds an error
-		drift.setValue('testForm', 'email', 'changed@example.com')
-		drift.setErrors('testForm', { email: ['Bad email'] })
-
-		await drift.resetForm('testForm')
-
-		expect(drift.getValue('testForm', 'email')).toBe('init@example.com')
-		expect(drift.getErrors('testForm', 'email')).toEqual([])
-		expect(drift.isDirty('testForm', 'email')).toBe(false)
-	})
-
-	it('resets DOM inputs to initial values', async () => {
-		drift.setInitialValues('testForm', { email: 'init@example.com' })
-		drift.setValue('testForm', 'email', 'changed@example.com')
-
-		await drift.resetForm('testForm')
-
-		const input = container.querySelector('input[name="email"]') as HTMLInputElement
-		expect(input.value).toBe('init@example.com')
-	})
-
-	it('resetForm with no initial values resets to empty', async () => {
-		drift.setValue('testForm', 'email', 'test@example.com')
-		await drift.resetForm('testForm')
-
-		expect(drift.getValue('testForm', 'email')).toBeUndefined()
-	})
-
-	it('emits form:reset event', async () => {
-		const listener = vi.fn()
-		drift.on('form:reset', listener)
-
-		await drift.resetForm('testForm')
-
-		expect(listener).toHaveBeenCalledWith(
-			expect.objectContaining({ type: 'form:reset', formKey: 'testForm' }),
-		)
-	})
-})
-
-/*
- *   RESET HANDLER TESTS
- ***************************************************************************************************/
-describe('Drift - Reset Handler', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('calls reset handler after reset', async () => {
-		const handler = vi.fn()
-		drift.onReset('testForm', handler)
-
-		await drift.resetForm('testForm')
-
-		expect(handler).toHaveBeenCalled()
-	})
-
-	it('calls reset handler when native reset button is clicked', async () => {
-		const handler = vi.fn()
-		drift.onReset('testForm', handler)
-
-		const form = container.querySelector('form') as HTMLFormElement
-		form.dispatchEvent(new Event('reset', { bubbles: true }))
-		await waitForMutations()
-
-		expect(handler).toHaveBeenCalled()
-	})
-
-	it('handles async reset handlers', async () => {
-		let resolved = false
-		drift.onReset('testForm', async () => {
-			await new Promise(r => setTimeout(r, 10))
-			resolved = true
-		})
-
-		await drift.resetForm('testForm')
-
-		expect(resolved).toBe(true)
-	})
-
-	it('unsubscribes reset handler', async () => {
-		const handler = vi.fn()
-		const unsubscribe = drift.onReset('testForm', handler)
-		unsubscribe()
-
-		await drift.resetForm('testForm')
-
-		expect(handler).not.toHaveBeenCalled()
-	})
-
-	it('handles reset handler errors gracefully', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-		drift.onReset('testForm', () => {
-			throw new Error('reset failed')
-		})
-
-		await drift.resetForm('testForm')
-
-		expect(consoleSpy).toHaveBeenCalled()
-		consoleSpy.mockRestore()
-	})
-})
-
-/*
- *   CAN SUBMIT TESTS
- ***************************************************************************************************/
-describe('Drift - canSubmit / hasBeenValidated', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('canSubmit is false before any validation', () => {
-		expect(drift.getForm('testForm')?.canSubmit).toBe(false)
-		expect(drift.getForm('testForm')?.hasBeenValidated).toBe(false)
-	})
-
-	it('canSubmit becomes true after successful form validation', async () => {
-		await drift.validateForm('testForm')
-
-		expect(drift.getForm('testForm')?.hasBeenValidated).toBe(true)
-		expect(drift.getForm('testForm')?.canSubmit).toBe(true)
-	})
-
-	it('canSubmit is false after form validation with errors', async () => {
-		const schema: DriftSchema = {
-			validate: () => ({ success: false, errors: { email: ['Required'] } }),
-		}
-		drift.registerSchema('testForm', schema)
-
-		await drift.validateForm('testForm')
-
-		expect(drift.getForm('testForm')?.hasBeenValidated).toBe(true)
-		expect(drift.getForm('testForm')?.canSubmit).toBe(false)
-	})
-
-	it('canSubmit updates when errors are cleared after validation', async () => {
-		const schema: DriftSchema = {
-			validate: () => ({ success: false, errors: { email: ['Required'] } }),
-		}
-		drift.registerSchema('testForm', schema)
-		await drift.validateForm('testForm')
-
-		drift.clearErrors('testForm')
-
-		expect(drift.getForm('testForm')?.canSubmit).toBe(true)
-	})
-
-	it('canSubmit updates when setErrors adds errors after validation', async () => {
-		await drift.validateForm('testForm')
-		expect(drift.getForm('testForm')?.canSubmit).toBe(true)
-
-		drift.setErrors('testForm', { email: ['Bad'] })
-
-		expect(drift.getForm('testForm')?.canSubmit).toBe(false)
-	})
-
-	it('canSubmit resets to false after resetForm', async () => {
-		await drift.validateForm('testForm')
-		expect(drift.getForm('testForm')?.canSubmit).toBe(true)
-
-		await drift.resetForm('testForm')
-
-		expect(drift.getForm('testForm')?.canSubmit).toBe(false)
-		expect(drift.getForm('testForm')?.hasBeenValidated).toBe(false)
-	})
-})
-
-/*
- *   DEFAULT VALIDATE ON TESTS
- ***************************************************************************************************/
-describe('Drift - defaultValidateOn', () => {
-	it('uses defaultValidateOn from config when field has no validateOn', async () => {
-		const customDrift = new Drift({ defaultValidateOn: 'change' })
-		const customContainer = document.createElement('div')
-		document.body.appendChild(customContainer)
-
-		const form = createForm('testForm', ['email'])
-		customContainer.appendChild(form)
-		customDrift.observe(customContainer)
-		await waitForMutations()
-
-		customDrift.registerSchema('testForm', {
-			fields: {
-				email: {
-					validate: value => ({
-						success: typeof value === 'string' && value.includes('@'),
-						errors:
-							typeof value === 'string' && value.includes('@')
-								? undefined
-								: { email: ['Invalid'] },
-					}),
-				},
-			},
-		})
-
-		const input = form.querySelector('input[name="email"]') as HTMLInputElement
-		triggerInput(input, 'notanemail')
-		await waitForMutations()
-
-		expect(customDrift.getErrors('testForm', 'email')).toContain('Invalid')
-		customDrift.disconnect()
-		document.body.removeChild(customContainer)
-	})
-
-	it('field validateOn takes precedence over defaultValidateOn', async () => {
-		const customDrift = new Drift({ defaultValidateOn: 'change' })
-		const customContainer = document.createElement('div')
-		document.body.appendChild(customContainer)
-
-		const form = createForm('testForm', ['email'])
-		customContainer.appendChild(form)
-		customDrift.observe(customContainer)
-		await waitForMutations()
-
-		customDrift.registerSchema('testForm', {
-			fields: {
-				email: {
-					validate: value => ({
-						success: typeof value === 'string' && value.includes('@'),
-						errors:
-							typeof value === 'string' && value.includes('@')
-								? undefined
-								: { email: ['Invalid'] },
-					}),
-					validateOn: 'blur',
-				},
-			},
-		})
-
-		const input = form.querySelector('input[name="email"]') as HTMLInputElement
-		triggerInput(input, 'notanemail')
-		await waitForMutations()
-
-		expect(customDrift.getErrors('testForm', 'email')).toEqual([])
-		customDrift.disconnect()
-		document.body.removeChild(customContainer)
-	})
-})
-
-/*
- *   FIELD VALIDATING TESTS
- ***************************************************************************************************/
-describe('Drift - validatingFields', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['email'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('sets validatingFields during async field validation', async () => {
-		let capturedState: boolean | undefined
-
-		drift.registerSchema('testForm', {
-			fields: {
-				email: {
-					validate: async value => {
-						capturedState = drift.getForm('testForm')?.validatingFields['email']
-						return { success: typeof value === 'string' && value.length > 0 }
-					},
-					validateOn: 'change',
-				},
-			},
-		})
-
-		await drift.validateField('testForm', 'email')
-
-		expect(capturedState).toBe(true)
-		expect(drift.getForm('testForm')?.validatingFields['email']).toBe(false)
-	})
-
-	it('clears validatingFields after validation completes', async () => {
-		drift.registerSchema('testForm', {
-			fields: {
-				email: {
-					validate: async () => ({ success: true }),
-					validateOn: 'change',
-				},
-			},
-		})
-
-		await drift.validateField('testForm', 'email')
-		expect(drift.getForm('testForm')?.validatingFields['email']).toBe(false)
-	})
-})
-
-/*
- *   TRANSFORM TESTS
- ***************************************************************************************************/
-describe('Drift - Field Transform', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['username'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('applies transform to value on user input', () => {
-		drift.registerSchema('testForm', {
-			fields: {
-				username: {
-					validate: () => ({ success: true }),
-					validateOn: 'change',
-					transform: value =>
-						typeof value === 'string' ? value.trim().toLowerCase() : value,
-				},
-			},
-		})
-
-		const input = container.querySelector('input[name="username"]') as HTMLInputElement
-		triggerInput(input, '  Alice  ')
-		expect(drift.getValue('testForm', 'username')).toBe('alice')
-	})
-
-	it('stored value reflects transform, not raw input', () => {
-		drift.registerSchema('testForm', {
-			fields: {
-				username: {
-					validate: () => ({ success: true }),
-					validateOn: 'change',
-					transform: value => (typeof value === 'string' ? value.toUpperCase() : value),
-				},
-			},
-		})
-
-		const input = container.querySelector('input[name="username"]') as HTMLInputElement
-		triggerInput(input, 'hello')
-		expect(drift.getValue('testForm', 'username')).toBe('HELLO')
-	})
-
-	it('setValue bypasses transform', () => {
-		drift.registerSchema('testForm', {
-			fields: {
-				username: {
-					validate: () => ({ success: true }),
-					validateOn: 'change',
-					transform: value => (typeof value === 'string' ? value.toUpperCase() : value),
-				},
-			},
-		})
-
-		drift.setValue('testForm', 'username', 'hello')
-		expect(drift.getValue('testForm', 'username')).toBe('hello')
-	})
-})
-
-/*
- *   CROSS-FIELD ERROR TESTS
- ***************************************************************************************************/
-describe('Drift - Cross-field Errors', () => {
-	beforeEach(async () => {
-		const form = createForm('testForm', ['password', 'confirm'])
-		container.appendChild(form)
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('applies errors for other fields returned by a field validator', async () => {
-		drift.registerSchema('testForm', {
-			fields: {
-				password: {
-					validate: (value, all) => {
-						if (value !== all.confirm) {
-							return {
-								success: false,
-								errors: {
-									password: ['Passwords do not match'],
-									confirm: ['Passwords do not match'],
-								},
-							}
-						}
-						return { success: true }
-					},
-					validateOn: 'change',
-				},
-			},
-		})
-
-		drift.setValue('testForm', 'confirm', 'different')
-		const input = container.querySelector('input[name="password"]') as HTMLInputElement
-		triggerInput(input, 'original')
-		await waitForMutations()
-
-		expect(drift.getErrors('testForm', 'password')).toContain('Passwords do not match')
-		expect(drift.getErrors('testForm', 'confirm')).toContain('Passwords do not match')
-	})
-
-	it('clears only the validated field error on success, not cross-field errors', async () => {
-		drift.setErrors('testForm', {
-			password: ['Bad'],
-			confirm: ['Also bad'],
-		})
-
-		drift.registerSchema('testForm', {
-			fields: {
-				password: {
-					validate: () => ({ success: true }),
-					validateOn: 'change',
-				},
-			},
-		})
-
-		await drift.validateField('testForm', 'password')
-		expect(drift.getErrors('testForm', 'password')).toEqual([])
-		expect(drift.getErrors('testForm', 'confirm')).toContain('Also bad')
-	})
-})
-
-/*
- *   RADIO GROUP TESTS
- ***************************************************************************************************/
-describe('Drift - Radio Groups', () => {
-	let form: HTMLFormElement
-	let radioYes: HTMLInputElement
-	let radioNo: HTMLInputElement
-
-	beforeEach(async () => {
-		form = document.createElement('form')
-		form.setAttribute('data-drift-form', 'testForm')
-
-		radioYes = document.createElement('input')
-		radioYes.type = 'radio'
-		radioYes.name = 'agree'
-		radioYes.value = 'yes'
-
-		radioNo = document.createElement('input')
-		radioNo.type = 'radio'
-		radioNo.name = 'agree'
-		radioNo.value = 'no'
-
-		form.appendChild(radioYes)
-		form.appendChild(radioNo)
-		container.appendChild(form)
-
-		drift.observe(container)
-		await waitForMutations()
-	})
-
-	it('registers radio group as a single field', () => {
-		// No radio checked yet — value is not stored, so undefined
-		expect(drift.getValue('testForm', 'agree')).toBeUndefined()
-	})
-
-	it('captures checked radio value on change', () => {
-		radioYes.checked = true
-		radioYes.dispatchEvent(new Event('change', { bubbles: true }))
-
-		expect(drift.getValue('testForm', 'agree')).toBe('yes')
+		expect(drift.form('f').getValue('late')).toBe('x')
 	})
 
-	it('updates state when a different radio is selected', () => {
-		radioYes.checked = true
-		radioYes.dispatchEvent(new Event('change', { bubbles: true }))
+	it('scan() applies pending changes without waiting for the observer', () => {
+		const { drift, root } = setup('<form data-drift-form="f"></form>')
 
-		radioNo.checked = true
-		radioNo.dispatchEvent(new Event('change', { bubbles: true }))
+		query(root, 'form').innerHTML = '<input name="late" value="x">'
+		drift.scan()
 
-		expect(drift.getValue('testForm', 'agree')).toBe('no')
+		expect(drift.form('f').getValue('late')).toBe('x')
 	})
 
-	it('sets checked radio via setValue', () => {
-		drift.setValue('testForm', 'agree', 'yes')
+	it('tracks a form that is added later', async () => {
+		const { drift, root } = setup('')
 
-		expect(radioYes.checked).toBe(true)
-		expect(radioNo.checked).toBe(false)
-	})
-
-	it('captures initially checked radio value', async () => {
-		// Rebuild form with a pre-checked radio
-		container.innerHTML = ''
-		const form2 = document.createElement('form')
-		form2.setAttribute('data-drift-form', 'preChecked')
-		const r1 = document.createElement('input')
-		r1.type = 'radio'
-		r1.name = 'size'
-		r1.value = 'sm'
-		const r2 = document.createElement('input')
-		r2.type = 'radio'
-		r2.name = 'size'
-		r2.value = 'lg'
-		r2.checked = true
-		form2.appendChild(r1)
-		form2.appendChild(r2)
-		container.appendChild(form2)
-		await waitForMutations()
+		root.innerHTML = '<form data-drift-form="late"><input name="a" value="1"></form>'
+		await flush()
 
-		expect(drift.getValue('preChecked', 'size')).toBe('lg')
+		expect(drift.form('late').getValue('a')).toBe('1')
 	})
 
-	it('marks radio group dirty on change', () => {
-		radioYes.checked = true
-		radioYes.dispatchEvent(new Event('change', { bubbles: true }))
+	it('works on any element, and gives a nested form its own inputs', () => {
+		const { drift } = setup(`
+			<div data-drift-form="outer">
+				<input name="a" value="1">
+				<div data-drift-form="inner"><input name="b" value="2"></div>
+			</div>
+		`)
 
-		expect(drift.isDirty('testForm', 'agree')).toBe(true)
+		expect(drift.form('outer').getState().values).toEqual({ a: '1' })
+		expect(drift.form('inner').getState().values).toEqual({ b: '2' })
 	})
 
-	it('resets radio group to unchecked on resetForm with no initial values', async () => {
-		radioYes.checked = true
-		radioYes.dispatchEvent(new Event('change', { bubbles: true }))
+	it('skips ignored, disabled and button inputs', () => {
+		const { drift } = setup(`
+			<form data-drift-form="f">
+				<input name="kept" value="1">
+				<input name="ignored" value="2" data-drift-ignore>
+				<div data-drift-ignore><input name="deep" value="3"></div>
+				<input name="off" value="4" disabled>
+				<input type="submit" name="go" value="Go">
+				<button name="b" value="x">b</button>
+				<input value="no name">
+			</form>
+		`)
 
-		await drift.resetForm('testForm')
-
-		expect(radioYes.checked).toBe(false)
-		expect(radioNo.checked).toBe(false)
+		expect(drift.form('f').getState().values).toEqual({ kept: '1' })
 	})
-})
-
-/*
- *   INPUT TYPE TESTS
- ***************************************************************************************************/
-describe('Drift - Input Types', () => {
-	it('handles checkbox inputs', async () => {
-		const form = document.createElement('form')
-		form.setAttribute('data-drift-form', 'testForm')
-		const checkbox = document.createElement('input')
-		checkbox.name = 'agree'
-		checkbox.type = 'checkbox'
-		form.appendChild(checkbox)
-		container.appendChild(form)
-
-		drift.observe(container)
-		await waitForMutations()
 
-		checkbox.checked = true
-		checkbox.dispatchEvent(new Event('input', { bubbles: true }))
+	it('keeps the value of a removed field, and restores it when it returns empty', () => {
+		const { drift, root } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const form = query(root, 'form')
 
-		expect(drift.getValue('testForm', 'agree')).toBe(true)
-	})
+		type(query(form, '[name=a]'), 'typed')
+		form.innerHTML = ''
+		drift.scan()
 
-	it('handles select inputs', async () => {
-		const form = document.createElement('form')
-		form.setAttribute('data-drift-form', 'testForm')
-		const select = document.createElement('select')
-		select.name = 'country'
-		select.innerHTML = '<option value="us">US</option><option value="uk">UK</option>'
-		form.appendChild(select)
-		container.appendChild(form)
+		expect(drift.form('f').getValue('a')).toBe('typed')
 
-		drift.observe(container)
-		await waitForMutations()
+		form.innerHTML = '<input name="a">'
+		drift.scan()
 
-		select.value = 'uk'
-		select.dispatchEvent(new Event('change', { bubbles: true }))
-
-		expect(drift.getValue('testForm', 'country')).toBe('uk')
+		expect(query(form, '[name=a]').value).toBe('typed')
 	})
-
-	it('handles textarea inputs', async () => {
-		const form = document.createElement('form')
-		form.setAttribute('data-drift-form', 'testForm')
-		const textarea = document.createElement('textarea')
-		textarea.name = 'message'
-		form.appendChild(textarea)
-		container.appendChild(form)
 
-		drift.observe(container)
-		await waitForMutations()
-
-		textarea.value = 'Hello world'
-		textarea.dispatchEvent(new Event('input', { bubbles: true }))
-
-		expect(drift.getValue('testForm', 'message')).toBe('Hello world')
-	})
+	it('reconciles when a name, type or disabled attribute changes', async () => {
+		const { drift, root } = setup('<form data-drift-form="f"><input name="a" value="1"></form>')
+		const input = query(root, '[name=a]')
 
-	it('handles number inputs', async () => {
-		const form = document.createElement('form')
-		form.setAttribute('data-drift-form', 'testForm')
-		const input = document.createElement('input')
-		input.name = 'age'
-		input.type = 'number'
-		form.appendChild(input)
-		container.appendChild(form)
+		input.name = 'b'
+		await flush()
 
-		drift.observe(container)
-		await waitForMutations()
+		expect(drift.form('f').getState().values).toMatchObject({ b: '1' })
 
-		input.value = '25'
+		input.disabled = true
+		await flush()
+		input.value = 'changed'
 		input.dispatchEvent(new Event('input', { bubbles: true }))
 
-		expect(drift.getValue('testForm', 'age')).toBe(25)
+		expect(drift.form('f').getValue('b')).toBe('1')
+	})
+
+	it('moves a field between forms (L4)', () => {
+		const { drift, root } = setup(`
+			<form data-drift-form="one"><input name="a" value="1"></form>
+			<form data-drift-form="two"></form>
+		`)
+		const input = query(root, '[name=a]')
+
+		query(root, '[data-drift-form=two]').appendChild(input)
+		drift.scan()
+		type(input, '2')
+
+		expect(drift.form('two').getValue('a')).toBe('2')
+		expect(drift.form('one').getValue('a')).toBe('1')
+	})
+
+	it('re-keys a form when its attribute changes', () => {
+		const { drift, root } = setup(
+			'<form data-drift-form="one"><input name="a" value="1"></form>',
+		)
+
+		query(root, 'form').setAttribute('data-drift-form', 'two')
+		drift.scan()
+
+		expect(drift.form('two').getValue('a')).toBe('1')
+	})
+
+	it('warns once and leaves a duplicate form key untracked (L5)', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		const { drift, root } = setup(`
+			<form data-drift-form="dup"><input name="a" value="1"></form>
+			<form data-drift-form="dup"><input name="a" value="2"></form>
+		`)
+
+		expect(drift.form('dup').getValue('a')).toBe('1')
+		expect(warn).toHaveBeenCalledTimes(1)
+
+		type(root.querySelectorAll('input')[1]!, '9')
+
+		expect(drift.form('dup').getValue('a')).toBe('1')
+	})
+
+	it('uses a custom attribute prefix', () => {
+		const { drift } = setup('<form app-form="f"><input name="a" value="1"></form>', {
+			attributePrefix: 'app',
+		})
+
+		expect(drift.form('f').getValue('a')).toBe('1')
+	})
+})
+
+describe('values', () => {
+	it('follows user input, including input and change on the same value', () => {
+		const { drift, root } = setup(`
+			<form data-drift-form="f">
+				<input name="a">
+				<select name="s"><option value="1">1</option><option value="2">2</option></select>
+				<input type="checkbox" name="c">
+				<input type="radio" name="r" value="x"><input type="radio" name="r" value="y">
+			</form>
+		`)
+		const form = drift.form('f')
+		const calls = vi.fn()
+
+		form.subscribe(calls)
+		type(query(root, '[name=a]'), 'hi')
+		change(query(root, '[name=a]'))
+
+		expect(calls).toHaveBeenCalledTimes(1)
+
+		query<HTMLSelectElement>(root, 'select').value = '2'
+		change(query(root, 'select'))
+		query(root, '[name=c]').click()
+		query(root, '[value=y]').click()
+
+		expect(form.getState().values).toEqual({ a: 'hi', s: '2', c: true, r: 'y' })
+	})
+
+	it('reads number inputs as null when empty and as numbers otherwise (L2)', () => {
+		const { drift, root } = setup(
+			'<form data-drift-form="f"><input type="number" name="n"></form>',
+		)
+
+		expect(drift.form('f').getValue('n')).toBeNull()
+
+		type(query(root, '[name=n]'), '4.5')
+
+		expect(drift.form('f').getValue('n')).toBe(4.5)
+	})
+
+	it('makes values read-only (L9)', () => {
+		const { drift } = setup('<form data-drift-form="f"><input name="a" value="1"></form>')
+		const values = drift.form('f').getState().values as Record<string, unknown>
+
+		expect(() => {
+			values.a = 'x'
+		}).toThrow(TypeError)
+	})
+
+	it('sets values from the API, writing the DOM and emitting events', () => {
+		const { drift, root } = setup(`
+			<form data-drift-form="f">
+				<input name="a">
+				<input name="user.name">
+				<input type="checkbox" name="c">
+			</form>
+		`)
+		const form = drift.form('f')
+		const events: string[] = []
+
+		drift.on('field:change', event => events.push(`${event.name}:${event.source}`))
+		form.setValue('a', 'x')
+		form.setValues({ user: { name: 'Ada' }, c: true })
+
+		expect(query(root, '[name=a]').value).toBe('x')
+		expect(query(root, '[name="user.name"]').value).toBe('Ada')
+		expect(query(root, '[name=c]').checked).toBe(true)
+		expect(events).toEqual(['a:api', 'user.name:api', 'c:api'])
+	})
+
+	it('notifies once for setValues', () => {
+		const { drift } = setup('<form data-drift-form="f"><input name="a"><input name="b"></form>')
+		const listener = vi.fn()
+
+		drift.form('f').subscribe(listener)
+		drift.form('f').setValues({ a: '1', b: '2' })
+
+		expect(listener).toHaveBeenCalledTimes(1)
+	})
+
+	it('applies a field transform to user input and API writes, not to the DOM', () => {
+		const { drift, root } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const form = drift.form('f', {
+			fields: { a: { transform: v => String(v).trim().toLowerCase() } },
+		})
+
+		type(query(root, '[name=a]'), '  HeLLo ')
+
+		expect(form.getValue('a')).toBe('hello')
+
+		form.setValue('a', '  X ')
+
+		expect(form.getValue('a')).toBe('x')
+	})
+
+	it('reports a number field value that the DOM would not hold', () => {
+		const { drift } = setup('<form data-drift-form="f"><input type="number" name="n"></form>')
+
+		drift.form('f').setValue('n', '12')
+
+		expect(drift.form('f').getValue('n')).toBe(12)
+	})
+
+	it('ignores an invalid name with one warning', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		const { drift } = setup('<form data-drift-form="f"></form>')
+
+		drift.form('f').setValue('__proto__', 'x')
+		drift.form('f').setValue('__proto__', 'x')
+
+		expect(warn).toHaveBeenCalledTimes(1)
+		expect(({} as Record<string, unknown>).x).toBeUndefined()
+	})
+})
+
+describe('dirty and touched', () => {
+	it('is dirty only while the value differs from the initial value (L8)', () => {
+		const { drift, root } = setup(
+			'<form data-drift-form="f"><input name="a" value="start"></form>',
+		)
+		const form = drift.form('f')
+		const input = query(root, '[name=a]')
+
+		expect(form.getState().isDirty).toBe(false)
+
+		type(input, 'changed')
+
+		expect(form.getState().dirty).toEqual({ a: true })
+
+		type(input, 'start')
+
+		expect(form.getState().isDirty).toBe(false)
+	})
+
+	it('touches on blur, and on change for checkboxes and radios (L8)', () => {
+		const { drift, root } = setup(`
+			<form data-drift-form="f">
+				<input name="a"><input type="checkbox" name="c">
+				<input type="radio" name="r" value="1">
+			</form>
+		`)
+		const form = drift.form('f')
+
+		type(query(root, '[name=a]'), 'x')
+
+		expect(form.getState().touched).toEqual({})
+
+		blur(query(root, '[name=a]'))
+		query(root, '[name=c]').click()
+		query(root, '[name=r]').click()
+
+		expect(form.getState().touched).toEqual({ a: true, c: true, r: true })
+	})
+
+	it('publishes nothing on a second blur of a touched field (L9)', () => {
+		const { drift, root } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const listener = vi.fn()
+
+		blur(query(root, '[name=a]'))
+		drift.form('f').subscribe(listener)
+		blur(query(root, '[name=a]'))
+
+		expect(listener).not.toHaveBeenCalled()
+	})
+
+	it('keeps the snapshot identity when nothing changed', () => {
+		const { drift } = setup('<form data-drift-form="f"><input name="a"></form>')
+
+		expect(drift.form('f').getState()).toBe(drift.form('f').getState())
+	})
+
+	it('has a submittable fresh form, and derives its flags', () => {
+		const { drift } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const state = drift.form('f').getState()
+
+		expect(state).toMatchObject({
+			status: 'idle',
+			isValid: true,
+			canSubmit: true,
+			submitCount: 0,
+			formErrors: [],
+		})
+	})
+})
+
+describe('events', () => {
+	it('emits typed registration, focus and blur events', () => {
+		const events: string[] = []
+		const drift = new Drift()
+		const root = mount('<form data-drift-form="f"><input name="a" value="1"></form>')
+
+		for (const type of [
+			'form:register',
+			'field:register',
+			'field:focus',
+			'field:blur',
+		] as const) {
+			drift.on(type, () => events.push(type))
+		}
+
+		drift.observe(root)
+		focus(query(root, '[name=a]'))
+		blur(query(root, '[name=a]'))
+
+		expect(events).toEqual(['form:register', 'field:register', 'field:focus', 'field:blur'])
+	})
+
+	it('emits unregister events when elements go away', () => {
+		const { drift, root } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const events: string[] = []
+
+		drift.on('field:unregister', event => events.push(`field:${event.name}`))
+		drift.on('form:unregister', event => events.push(`form:${event.formKey}`))
+		root.innerHTML = ''
+		drift.scan()
+
+		expect(events).toContain('field:a')
+		expect(events).toContain('form:f')
+	})
+
+	it('stops a listener with its unsubscribe, and isolates a throwing one (H5)', () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+		const { drift } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const heard = vi.fn()
+		const stop = drift.on('field:change', heard)
+
+		drift.on('field:change', () => {
+			throw new Error('boom')
+		})
+		drift.form('f').setValue('a', '1')
+
+		expect(heard).toHaveBeenCalledTimes(1)
+		expect(error).toHaveBeenCalled()
+
+		stop()
+		drift.form('f').setValue('a', '2')
+
+		expect(heard).toHaveBeenCalledTimes(1)
+	})
+
+	it('only calls the subscribers of the form that changed', () => {
+		const { drift, root } = setup(`
+			<form data-drift-form="one"><input name="a"></form>
+			<form data-drift-form="two"><input name="a"></form>
+		`)
+		const one = vi.fn()
+		const two = vi.fn()
+
+		drift.form('one').subscribe(one)
+		drift.form('two').subscribe(two)
+		type(root.querySelectorAll('input')[0]!, 'x')
+
+		expect(one).toHaveBeenCalled()
+		expect(two).not.toHaveBeenCalled()
+	})
+
+	it('does not call a subscriber on subscribe, and stops after unsubscribe', () => {
+		const { drift } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const listener = vi.fn()
+		const stop = drift.form('f').subscribe(listener)
+
+		expect(listener).not.toHaveBeenCalled()
+
+		stop()
+		drift.form('f').setValue('a', '1')
+
+		expect(listener).not.toHaveBeenCalled()
+	})
+
+	it('survives a throwing subscriber', () => {
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+		const { drift } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const later = vi.fn()
+
+		drift.form('f').subscribe(() => {
+			throw new Error('boom')
+		})
+		drift.form('f').subscribe(later)
+		drift.form('f').setValue('a', '1')
+
+		expect(later).toHaveBeenCalled()
+	})
+
+	it('falls back to console.error for an error event nobody listens to', () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+		const { drift } = setup('<form data-drift-form="f"><input name="a"></form>')
+
+		drift.form('f', {
+			fields: {
+				a: {
+					validate: () => {
+						throw new Error('boom')
+					},
+				},
+			},
+		})
+
+		return drift
+			.form('f')
+			.validate('a')
+			.then(() => {
+				expect(error).toHaveBeenCalled()
+			})
+	})
+})
+
+describe('the form handle', () => {
+	it('returns the same handle for a key, and replaces options when passed again', async () => {
+		const { drift } = setup('<form data-drift-form="f"><input name="a" value="x"></form>')
+		const first = drift.form('f', { fields: { a: { validate: () => 'one' } } })
+
+		expect(drift.form('f')).toBe(first)
+
+		await first.validate('a')
+
+		expect(first.getState().errors).toEqual({ a: ['one'] })
+
+		drift.form('f', { fields: { a: { validate: () => 'two' } } })
+		await first.validate('a')
+
+		expect(first.getState().errors).toEqual({ a: ['two'] })
+	})
+
+	it('keeps typed values when configured again with the same initial values', () => {
+		const { drift, root } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const options = { initialValues: { a: 'seed' } }
+
+		drift.form('f', options)
+		type(query(root, '[name=a]'), 'typed')
+		drift.form('f', { ...options })
+
+		expect(drift.form('f').getValue('a')).toBe('typed')
+
+		drift.form('f', { initialValues: { a: 'other' } })
+
+		expect(drift.form('f').getValue('a')).toBe('other')
+	})
+
+	it('creates the record before the DOM has the form, and the DOM fills it (state first)', () => {
+		const drift = new Drift()
+		const form = drift.form('f', { initialValues: { a: 'seed' } })
+
+		form.setErrors({ a: ['early'] })
+
+		expect(form.getState().values).toEqual({ a: 'seed' })
+
+		const root = mount('<form data-drift-form="f"><input name="a"></form>')
+
+		drift.observe(root)
+
+		expect(query(root, '[name=a]').value).toBe('seed')
+		expect(form.getState().errors).toEqual({ a: ['early'] })
+	})
+
+	it('does not define fields without elements: state alone adds no field, flag or dirty entry', () => {
+		const drift = new Drift()
+		const form = drift.form('f')
+
+		form.setValue('ghost', 'x')
+
+		expect(form.getState().dirty).toEqual({})
+		expect(form.getState().touched).toEqual({})
+	})
+
+	it('has methods that work when detached, as useSyncExternalStore needs', () => {
+		const { drift } = setup('<form data-drift-form="f"><input name="a"></form>')
+		const { subscribe, getState, setValue } = drift.form('f')
+		const listener = vi.fn()
+
+		subscribe(listener)
+		setValue('a', 'x')
+
+		expect(listener).toHaveBeenCalledTimes(1)
+		expect(getState().values).toEqual({ a: 'x' })
+	})
+
+	it('lists every form with forms()', () => {
+		const { drift } = setup('<form data-drift-form="a"></form>')
+
+		drift.form('b')
+
+		expect(Array.from(drift.getForms().keys()).sort()).toEqual(['a', 'b'])
+	})
+
+	it('unsubscribes only its own submit handler (L5)', async () => {
+		const drift = new Drift()
+		const form = drift.form('f')
+		const first = vi.fn()
+		const second = vi.fn()
+		const stopFirst = form.onSubmit(first)
+
+		form.onSubmit(second)
+		stopFirst()
+		await form.submit()
+
+		expect(first).not.toHaveBeenCalled()
+		expect(second).toHaveBeenCalledTimes(1)
+	})
+
+	it('removes a value and splices an array row with unsetValue (L6)', () => {
+		const { drift } = setup(`
+			<form data-drift-form="f">
+				<input name="items[0].n" value="a">
+				<input name="items[1].n" value="b">
+			</form>
+		`)
+		const form = drift.form('f')
+
+		form.unsetValue('items[0]')
+
+		expect(form.getState().values).toEqual({ items: [{ n: 'b' }] })
+
+		form.unsetValue('items[5]')
+
+		expect(form.getState().values).toEqual({ items: [{ n: 'b' }] })
+	})
+
+	it('ignores a __proto__ form key as a plain key (S1)', () => {
+		const drift = new Drift()
+
+		drift.form('__proto__').setValue('a', '1')
+
+		expect(drift.form('__proto__').getValue('a')).toBe('1')
+		expect(({} as Record<string, unknown>).values).toBeUndefined()
+		expect(Array.from(drift.getForms().keys())).toEqual(['__proto__'])
+	})
+})
+
+describe('environment', () => {
+	it('reads no stored forms when constructed, and only removes the 1.4 blob (L11)', () => {
+		const read = vi.spyOn(Storage.prototype, 'getItem')
+
+		window.localStorage.setItem('drift-form-state', '{"forms":{}}')
+		new Drift({ persist: {} })
+
+		expect(read).not.toHaveBeenCalled()
+		expect(window.localStorage.getItem('drift-form-state')).toBeNull()
+	})
+
+	it('throws NO_BODY when observe() has no body to use (L11)', () => {
+		vi.spyOn(document, 'body', 'get').mockReturnValue(null as unknown as HTMLElement)
+
+		expect(() => {
+			new Drift().observe()
+		}).toThrow(expect.objectContaining({ code: 'NO_BODY', name: 'DriftError' }))
+	})
+
+	it('exposes DriftError with a code', () => {
+		expect(new DriftError('x', 'NO_DOM').code).toBe('NO_DOM')
+	})
+
+	it('observes document.body by default', () => {
+		const drift = new Drift()
+
+		mount('<form data-drift-form="f"><input name="a" value="1"></form>')
+		drift.observe()
+
+		expect(drift.form('f').getValue('a')).toBe('1')
+
+		drift.disconnect()
 	})
 })

@@ -1,837 +1,632 @@
 /*
  *   IMPORTS
  ***************************************************************************************************/
-import { DriftStore } from './store.js'
-import { DriftObserver } from './observer.js'
-import { SchemaRegistry } from './registry.js'
-import { DriftEventEmitter } from './emitter.js'
-import { getInputValue, setInputValue, isEmpty } from './input.js'
-import { setNestedValue, getNestedValue } from './parser.js'
+import {
+	addListener,
+	attributeOf,
+	closestOf,
+	containsNode,
+	isConnectedNode,
+	matchesSelector,
+	queryAllOf,
+	requestSubmitOf,
+} from './dom.js'
+import { isFieldTag, isTrackable, type FieldElement } from './fields.js'
+import { FormRecord, type FieldRecord, type FormHost, type ResolvedConfig } from './form.js'
+import { collectTargets, observedAttributes } from './observer.js'
+import { createPersister, removeLegacyState, type Persister } from './persist.js'
+import type { StandardSchemaV1 } from './schema.js'
 import type {
 	DriftConfig,
-	DriftFormState,
-	DriftSchema,
-	DriftInputElement,
-	DriftSubmitHandler,
-	DriftResetHandler,
-	DriftStateCallback,
-	DriftEvent,
-	DriftEventListener,
-	ValidationTrigger,
+	DriftErrorCode,
+	DriftEventMap,
+	FormHandle,
+	FormOptions,
+	FormOutput,
+	FormState,
+	SchemaFormOptions,
 } from './types.js'
+
+/*
+ *   TYPES
+ ***************************************************************************************************/
+interface Binding {
+	readonly record: FormRecord
+	readonly field: FieldRecord
+	readonly element: FieldElement
+	readonly type: string
+	restore: (() => void) | null
+}
+
+type Listener = (event: unknown) => void
+
+declare const process: { env: { NODE_ENV?: string } }
 
 /*
  *   CONSTANTS
  ***************************************************************************************************/
-const DEFAULT_CONFIG: Required<Omit<DriftConfig, 'defaultValidateOn'>> & {
-	defaultValidateOn?: ValidationTrigger
-} = {
-	formAttribute: 'data-drift-form',
-	nestedAttribute: 'data-drift-nested',
-	hiddenAttribute: 'data-drift-hidden',
-	persist: false,
-	observerDebounce: 16,
-}
-
-/*
- *   UTILITIES
- ***************************************************************************************************/
-function createEmptyFormState(): DriftFormState {
-	return {
-		values: {},
-		errors: {},
-		touched: {},
-		dirty: {},
-		isValid: true,
-		isSubmitting: false,
-		isValidating: false,
-		initialValues: {},
-		hasBeenValidated: false,
-		canSubmit: false,
-		validatingFields: {},
-	}
-}
-
-/*
- *   DRIFT CLASS
- ***************************************************************************************************/
-/**
- * Main Drift form management class that handles automatic form discovery,
- * state management, validation, and event handling
- */
-export class Drift {
-	private config: Required<Omit<DriftConfig, 'defaultValidateOn'>> & {
-		defaultValidateOn?: ValidationTrigger
-	}
-	private state: DriftStore
-	private observer: DriftObserver
-	private registry: SchemaRegistry
-	private emitter: DriftEventEmitter = new DriftEventEmitter()
-	private fieldElements: Map<string, Map<string, DriftInputElement>> = new Map()
-	private formElements: Map<string, Element> = new Map()
-	private submitHandlers: Map<string, DriftSubmitHandler> = new Map()
-	private resetHandlers: Map<string, DriftResetHandler> = new Map()
-	private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
-	private suppressedElements: Set<DriftInputElement> = new Set()
-	private radioGroups: Map<string, Map<string, Set<HTMLInputElement>>> = new Map()
-
-	constructor(config: DriftConfig = {}) {
-		this.config = { ...DEFAULT_CONFIG, ...config }
-
-		this.state = new DriftStore({
-			initialState: { forms: {} },
-			persistKey: this.config.persist ? 'drift-form-state' : undefined,
-		})
-
-		this.registry = new SchemaRegistry()
-
-		this.observer = new DriftObserver(
-			{
-				onFormAdded: this.handleFormAdded.bind(this),
-				onFormRemoved: this.handleFormRemoved.bind(this),
-				onFieldsAdded: this.handleFieldsAdded.bind(this),
-				onFieldRemoved: this.handleFieldRemoved.bind(this),
-			},
-			{
-				formAttribute: this.config.formAttribute,
-				hiddenAttribute: this.config.hiddenAttribute,
-				debounceMs: this.config.observerDebounce,
-			},
-		)
-	}
-
-	/**
-	 * Start observing the DOM for form elements
-	 */
-	observe(root: Element = document.body): void {
-		this.observer.observe(root)
-	}
-
-	/**
-	 * Stop observing the DOM and clean up resources
-	 */
-	disconnect(): void {
-		this.observer.disconnect()
-		this.clearAllDebounceTimers()
-	}
-
-	/**
-	 * Register a validation schema for a form
-	 */
-	registerSchema(formKey: string, schema: DriftSchema): void {
-		this.registry.register(formKey, schema)
-	}
-
-	/**
-	 * Unregister a validation schema for a form
-	 */
-	unregisterSchema(formKey: string): void {
-		this.registry.unregister(formKey)
-	}
-
-	/**
-	 * Get the current state of a form
-	 */
-	getForm(formKey: string): DriftFormState | undefined {
-		return this.state.getState().forms[formKey]
-	}
-
-	/**
-	 * Get all form states
-	 */
-	getAllForms(): Record<string, DriftFormState> {
-		return this.state.getState().forms
-	}
-
-	/**
-	 * Get a field value from a form
-	 */
-	getValue(formKey: string, fieldName: string): unknown {
-		const form = this.getForm(formKey)
-		if (!form) return undefined
-		return getNestedValue(form.values, fieldName)
-	}
-
-	/**
-	 * Set a field value in a form
-	 */
-	setValue(formKey: string, fieldName: string, value: unknown): void {
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-
-			draft.forms[formKey].values = setNestedValue(
-				draft.forms[formKey].values,
-				fieldName,
-				value,
-			) as Record<string, unknown>
-			draft.forms[formKey].dirty[fieldName] = true
-		})
-
-		const element = this.fieldElements.get(formKey)?.get(fieldName)
-		if (element) {
-			this.setInputValueInternal(element, value, formKey)
-		}
-
-		this.emitEvent({ type: 'field:change', formKey, fieldName, value })
-	}
-
-	/**
-	 * Set multiple field values in a form
-	 */
-	setValues(formKey: string, values: Record<string, unknown>): void {
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-
-			for (const [fieldName, value] of Object.entries(values)) {
-				draft.forms[formKey].values = setNestedValue(
-					draft.forms[formKey].values,
-					fieldName,
-					value,
-				) as Record<string, unknown>
-				draft.forms[formKey].dirty[fieldName] = true
-			}
-		})
-
-		for (const [fieldName, value] of Object.entries(values)) {
-			const element = this.fieldElements.get(formKey)?.get(fieldName)
-			if (element) {
-				this.setInputValueInternal(element, value, formKey)
-			}
-		}
-	}
-
-	/**
-	 * Get validation errors for a specific field
-	 */
-	getErrors(formKey: string, fieldName: string): string[] {
-		const form = this.getForm(formKey)
-		return form?.errors[fieldName] ?? []
-	}
-
-	/**
-	 * Get all validation errors for a form
-	 */
-	getAllErrors(formKey: string): Record<string, string[]> {
-		const form = this.getForm(formKey)
-		return form?.errors ?? {}
-	}
-
-	/**
-	 * Clear validation errors for a form or specific field
-	 */
-	clearErrors(formKey: string, fieldName?: string): void {
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-
-			if (fieldName) {
-				delete draft.forms[formKey].errors[fieldName]
-			} else {
-				draft.forms[formKey].errors = {}
-			}
-
-			draft.forms[formKey].isValid = Object.keys(draft.forms[formKey].errors).length === 0
-			draft.forms[formKey].canSubmit =
-				draft.forms[formKey].hasBeenValidated && draft.forms[formKey].isValid
-		})
-	}
-
-	/**
-	 * Set validation errors for a form
-	 */
-	setErrors(formKey: string, errors: Record<string, string[]>): void {
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-
-			draft.forms[formKey].errors = { ...draft.forms[formKey].errors, ...errors }
-			draft.forms[formKey].isValid = Object.keys(draft.forms[formKey].errors).length === 0
-			draft.forms[formKey].canSubmit =
-				draft.forms[formKey].hasBeenValidated && draft.forms[formKey].isValid
-		})
-	}
-
-	/**
-	 * Check if a field has been touched
-	 */
-	isTouched(formKey: string, fieldName: string): boolean {
-		const form = this.getForm(formKey)
-		return form?.touched[fieldName] ?? false
-	}
-
-	/**
-	 * Check if a field has been modified
-	 */
-	isDirty(formKey: string, fieldName: string): boolean {
-		const form = this.getForm(formKey)
-		return form?.dirty[fieldName] ?? false
-	}
-
-	/**
-	 * Check if any field in a form has been modified
-	 */
-	isFormDirty(formKey: string): boolean {
-		const form = this.getForm(formKey)
-		if (!form) return false
-		return Object.values(form.dirty).some(Boolean)
-	}
-
-	/**
-	 * Set initial values for a form
-	 */
-	setInitialValues(formKey: string, values: Record<string, unknown>): void {
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-
-			draft.forms[formKey].initialValues = { ...values }
-
-			for (const [fieldName, value] of Object.entries(values)) {
-				draft.forms[formKey].values = setNestedValue(
-					draft.forms[formKey].values,
-					fieldName,
-					value,
-				) as Record<string, unknown>
-				delete draft.forms[formKey].dirty[fieldName]
-			}
-		})
-
-		const fields = this.fieldElements.get(formKey)
-		if (fields) {
-			for (const [fieldName, value] of Object.entries(values)) {
-				const element = fields.get(fieldName)
-				if (element) {
-					this.setInputValueInternal(element, value, formKey)
-				}
-			}
-		}
-	}
-
-	/**
-	 * Reset a form to its initial state
-	 */
-	async resetForm(formKey: string): Promise<void> {
-		const form = this.getForm(formKey)
-		if (!form) return
-
-		const initialValues = { ...form.initialValues }
-
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-
-			const empty = createEmptyFormState()
-			draft.forms[formKey].values = { ...initialValues }
-			draft.forms[formKey].errors = empty.errors
-			draft.forms[formKey].touched = empty.touched
-			draft.forms[formKey].dirty = empty.dirty
-			draft.forms[formKey].isValid = empty.isValid
-			draft.forms[formKey].isSubmitting = empty.isSubmitting
-			draft.forms[formKey].isValidating = empty.isValidating
-			draft.forms[formKey].hasBeenValidated = empty.hasBeenValidated
-			draft.forms[formKey].canSubmit = empty.canSubmit
-			draft.forms[formKey].validatingFields = empty.validatingFields
-			draft.forms[formKey].initialValues = initialValues
-		})
-
-		const fields = this.fieldElements.get(formKey)
-		if (fields) {
-			for (const [fieldName, element] of fields.entries()) {
-				const value = initialValues[fieldName] ?? ''
-				this.setInputValueInternal(element, value, formKey)
-			}
-		}
-
-		const resetHandler = this.resetHandlers.get(formKey)
-		if (resetHandler) {
-			try {
-				await resetHandler()
-			} catch (error) {
-				console.error(`[Drift] Reset handler error for form "${formKey}":`, error)
-			}
-		}
-
-		this.emitEvent({ type: 'form:reset', formKey })
-	}
-
-	/**
-	 * Validate a specific field
-	 */
-	async validateField(formKey: string, fieldName: string): Promise<boolean> {
-		const form = this.getForm(formKey)
-		if (!form) return true
-
-		const value = getNestedValue(form.values, fieldName)
-
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-			draft.forms[formKey].validatingFields[fieldName] = true
-		})
-
-		this.emitEvent({ type: 'validation:start', formKey, fieldName })
-		const result = await this.registry.validateField(formKey, fieldName, value, form.values)
-
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-
-			if (result.success) {
-				delete draft.forms[formKey].errors[fieldName]
-			} else if (result.errors) {
-				for (const [key, errs] of Object.entries(result.errors)) {
-					if (errs?.length) draft.forms[formKey].errors[key] = errs
-				}
-			}
-
-			draft.forms[formKey].isValid = Object.keys(draft.forms[formKey].errors).length === 0
-			draft.forms[formKey].canSubmit =
-				draft.forms[formKey].hasBeenValidated && draft.forms[formKey].isValid
-			draft.forms[formKey].validatingFields[fieldName] = false
-		})
-
-		this.emitEvent({
-			type: 'validation:end',
-			formKey,
-			fieldName,
-			errors: result.errors?.[fieldName],
-		})
-
-		return result.success
-	}
-
-	/**
-	 * Validate an entire form
-	 */
-	async validateForm(formKey: string): Promise<boolean> {
-		const form = this.getForm(formKey)
-		if (!form) return true
-
-		this.state.mutate(draft => {
-			if (draft.forms[formKey]) {
-				draft.forms[formKey].isValidating = true
-			}
-		})
-
-		this.emitEvent({ type: 'validation:start', formKey })
-		const result = await this.registry.validateForm(formKey, form.values)
-
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
-
-			if (result.success) {
-				draft.forms[formKey].errors = {}
-			} else if (result.errors) {
-				draft.forms[formKey].errors = result.errors
-			}
-
-			draft.forms[formKey].isValid = Object.keys(draft.forms[formKey].errors).length === 0
-			draft.forms[formKey].isValidating = false
-			draft.forms[formKey].hasBeenValidated = true
-			draft.forms[formKey].canSubmit = draft.forms[formKey].isValid
-		})
-
-		this.emitEvent({ type: 'validation:end', formKey })
-
-		return result.success
-	}
-
-	/**
-	 * Register a submit handler for a form
-	 */
-	onSubmit(formKey: string, handler: DriftSubmitHandler): () => void {
-		this.submitHandlers.set(formKey, handler)
-		return () => this.submitHandlers.delete(formKey)
-	}
-
-	/**
-	 * Register a reset handler for a form
-	 */
-	onReset(formKey: string, handler: DriftResetHandler): () => void {
-		this.resetHandlers.set(formKey, handler)
-		return () => this.resetHandlers.delete(formKey)
-	}
-
-	/**
-	 * Submit a form programmatically
-	 */
-	async submit(formKey: string): Promise<boolean> {
-		const form = this.getForm(formKey)
-		if (!form) return false
-
-		this.state.mutate(draft => {
-			if (draft.forms[formKey]) {
-				draft.forms[formKey].isSubmitting = true
-			}
-		})
-
-		this.emitEvent({ type: 'submit:start', formKey })
-
-		const isValid = await this.validateForm(formKey)
-
-		if (!isValid) {
-			this.state.mutate(draft => {
-				if (draft.forms[formKey]) {
-					draft.forms[formKey].isSubmitting = false
-				}
-			})
-			this.emitEvent({ type: 'submit:end', formKey })
-			return false
-		}
-
-		const handler = this.submitHandlers.get(formKey)
-		if (handler) {
-			try {
-				await handler(form.values, formKey)
-			} catch (error) {
-				console.error(`[Drift] Submit handler error for form "${formKey}":`, error)
-			}
-		}
-
-		this.state.mutate(draft => {
-			if (draft.forms[formKey]) {
-				draft.forms[formKey].isSubmitting = false
-			}
-		})
-
-		this.emitEvent({ type: 'submit:end', formKey })
-
+const FIELD_SELECTOR = 'input, textarea, select'
+
+/** Bundlers replace this, and a page with no bundler has no `process` and so counts as development. */
+const IS_DEVELOPMENT = (() => {
+	try {
+		return process.env.NODE_ENV !== 'production'
+	} catch {
 		return true
 	}
+})()
 
-	/**
-	 * Subscribe to state changes for a specific form
-	 */
-	subscribe(formKey: string, callback: DriftStateCallback): () => void {
-		return this.state.subscribe(state => {
-			const form = state.forms[formKey]
-			if (form) {
-				callback(form)
+/** Shared by every instance, so two of them on one DOM can't re-submit each other forever. */
+const passThrough = new WeakSet<Element>()
+
+/*
+ *   ERRORS
+ ***************************************************************************************************/
+export class DriftError extends Error {
+	readonly code: DriftErrorCode
+
+	constructor(message: string, code: DriftErrorCode, options?: { cause?: unknown }) {
+		super(message, options)
+		this.name = 'DriftError'
+		this.code = code
+	}
+}
+
+/*
+ *   DRIFT
+ ***************************************************************************************************/
+/**
+ * Tracks forms and fields by their presence in the DOM. A form's key and its fields come from the
+ * elements, and `form(key)` configures and reads the form those elements define. Calling it before
+ * the element exists only creates the record that the DOM later fills.
+ */
+export class Drift {
+	private readonly config: ResolvedConfig
+	private readonly records = new Map<string, FormRecord>()
+	private readonly listeners = new Map<keyof DriftEventMap, Set<Listener>>()
+	private readonly persister: Persister
+	private readonly warned = new Set<string>()
+	private readonly failedForms = new WeakSet<Element>()
+	private readonly host: FormHost
+
+	private bindings = new WeakMap<Element, Binding>()
+	private formOf = new WeakMap<Element, FormRecord>()
+	private root: Element | null = null
+	private controller: AbortController | null = null
+	private observer: MutationObserver | null = null
+	private hasReportedPersistError = false
+	private hasSkipped = false
+	private hasFreed = false
+
+	constructor(config: DriftConfig = {}) {
+		const prefix = config.attributePrefix ?? 'data-drift'
+
+		this.config = {
+			attributes: {
+				form: `${prefix}-form`,
+				ignore: `${prefix}-ignore`,
+				persist: `${prefix}-persist`,
+				error: `${prefix}-error`,
+			},
+			validateOn: config.validateOn ?? 'submit',
+			aria: config.aria ?? false,
+			track: config.trackProgrammaticChanges,
+			validatorErrorMessage: config.validatorErrorMessage ?? 'Could not validate this field.',
+		}
+
+		removeLegacyState()
+
+		this.persister = createPersister(config.persist, (error, formKey) => {
+			if (this.hasReportedPersistError) {
+				return
 			}
+
+			this.hasReportedPersistError = true
+			this.emit('error', { formKey, phase: 'persist', error })
 		})
-	}
 
-	/**
-	 * Subscribe to state changes for all forms
-	 */
-	subscribeAll(callback: (forms: Record<string, DriftFormState>) => void): () => void {
-		return this.state.subscribe(state => {
-			callback(state.forms)
-		})
-	}
-
-	/**
-	 * Add an event listener
-	 */
-	on(event: string, listener: DriftEventListener): () => void {
-		return this.emitter.on(event, listener)
-	}
-
-	/**
-	 * Remove an event listener
-	 */
-	off(event: string, listener: DriftEventListener): void {
-		this.emitter.off(event, listener)
+		this.host = {
+			config: this.config,
+			persister: this.persister,
+			emit: (type, payload) => {
+				this.emit(type, payload)
+			},
+			warn: message => {
+				this.warn(message)
+			},
+		}
 	}
 
 	/*
-	 *   PRIVATE METHODS
+	 *   PUBLIC
 	 ************************************************************************************************/
-	private handleFormAdded(form: Element, formKey: string): void {
-		this.formElements.set(formKey, form)
-		this.fieldElements.set(formKey, new Map())
-		this.radioGroups.set(formKey, new Map())
+	/** Starts tracking the forms inside `root`, which defaults to `document.body`. */
+	observe(root?: Element): void {
+		const target = root ?? this.getDefaultRoot()
 
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) {
-				draft.forms[formKey] = createEmptyFormState()
+		this.disconnect()
+
+		const controller = new AbortController()
+		const options = { signal: controller.signal }
+		const doc = target.ownerDocument
+
+		this.controller = controller
+		this.root = target
+
+		addListener(target, 'input', this.handleInput, options)
+		addListener(target, 'change', this.handleInput, options)
+		addListener(target, 'focusin', this.handleFocusIn, options)
+		addListener(target, 'focusout', this.handleFocusOut, options)
+		addListener(target, 'submit', this.handleSubmit, options)
+		addListener(target, 'reset', this.handleReset, options)
+		doc.defaultView?.addEventListener('pagehide', this.handlePageHide, options)
+		doc.addEventListener('visibilitychange', this.handleVisibility, options)
+
+		this.observer = new MutationObserver(records => {
+			this.process(records)
+		})
+		this.observer.observe(target, {
+			childList: true,
+			subtree: true,
+			attributes: true,
+			attributeFilter: observedAttributes(this.config.attributes),
+		})
+
+		this.reconcile(target)
+	}
+
+	/** Stops tracking and releases listeners, timers and runs. Values are kept for a later `observe()`. */
+	disconnect(): void {
+		this.controller?.abort()
+		this.observer?.disconnect()
+		this.controller = null
+		this.observer = null
+		this.root = null
+
+		for (const record of this.records.values()) {
+			if (record.element) {
+				record.detach()
 			}
-		})
 
-		form.addEventListener('submit', e => {
-			e.preventDefault()
-			this.submit(formKey)
-		})
+			for (const element of record.getElements()) {
+				this.unbindElement(element)
+			}
+		}
 
-		form.addEventListener('reset', e => {
-			e.preventDefault()
-			this.resetForm(formKey)
-		})
-
-		this.emitEvent({ type: 'form:register', formKey })
+		this.bindings = new WeakMap()
+		this.formOf = new WeakMap()
 	}
 
-	private handleFormRemoved(_form: Element, formKey: string): void {
-		this.formElements.delete(formKey)
-		this.fieldElements.delete(formKey)
-		this.radioGroups.delete(formKey)
-		this.clearDebounceTimersForForm(formKey)
-		this.emitEvent({ type: 'form:unregister', formKey })
+	/** Applies pending DOM changes now instead of on the observer's next microtask. */
+	scan(): void {
+		if (this.observer) {
+			this.process(this.observer.takeRecords())
+		}
 	}
 
-	private handleFieldsAdded(fields: DriftInputElement[], _form: Element, formKey: string): void {
-		const fieldMap = this.fieldElements.get(formKey)
-		if (!fieldMap) return
+	/** Configures and reads a form. The same key always returns the same handle. */
+	form<TSchema extends StandardSchemaV1>(
+		key: string,
+		options: SchemaFormOptions<TSchema>,
+	): FormHandle<FormOutput<TSchema>>
+	form(key: string, options?: FormOptions): FormHandle
+	form(key: string, options?: FormOptions | SchemaFormOptions<StandardSchemaV1>): FormHandle {
+		const record = this.getRecord(key)
 
-		for (const field of fields) {
-			if (!field.name) continue
+		record.configure(options)
 
-			if (field instanceof HTMLInputElement && field.type === 'radio') {
-				const formRadioGroups = this.radioGroups.get(formKey)
-				if (formRadioGroups) {
-					if (!formRadioGroups.has(field.name)) {
-						formRadioGroups.set(field.name, new Set())
-					}
-					formRadioGroups.get(field.name)!.add(field)
-				}
-				if (!fieldMap.has(field.name)) {
-					fieldMap.set(field.name, field)
-				}
+		return record.handle as FormHandle
+	}
+
+	getForms(): ReadonlyMap<string, FormState> {
+		return new Map(Array.from(this.records, ([key, record]) => [key, record.handle.getState()]))
+	}
+
+	on<TType extends keyof DriftEventMap>(
+		type: TType,
+		listener: (event: DriftEventMap[TType]) => void,
+	): () => void {
+		const set = this.listeners.get(type) ?? new Set<Listener>()
+		const stored = listener as Listener
+
+		set.add(stored)
+		this.listeners.set(type, set)
+
+		return () => {
+			set.delete(stored)
+		}
+	}
+
+	/** Clears one form's stored values, or every form's. Call it on sign-out. */
+	clearPersisted(formKey?: string): void {
+		if (formKey !== undefined) {
+			const record = this.records.get(formKey)
+
+			if (record) {
+				record.clearPersisted()
 			} else {
-				fieldMap.set(field.name, field)
-			}
-		}
-
-		const fieldData: Array<{ field: DriftInputElement; name: string; value: unknown }> = []
-		const processedNames = new Set<string>()
-
-		for (const field of fields) {
-			if (!field.name) continue
-			if (processedNames.has(field.name)) continue
-			processedNames.add(field.name)
-
-			let value: unknown
-			if (field instanceof HTMLInputElement && field.type === 'radio') {
-				const group = this.radioGroups.get(formKey)?.get(field.name)
-				value = group ? (Array.from(group).find(el => el.checked)?.value ?? null) : null
-			} else {
-				value = getInputValue(field)
+				this.persister.clear(formKey)
 			}
 
-			fieldData.push({ field, name: field.name, value })
+			return
 		}
 
-		this.state.mutate(draft => {
-			if (!draft.forms[formKey]) return
+		for (const record of this.records.values()) {
+			record.clearPersisted()
+		}
 
-			for (const { name, value } of fieldData) {
-				const existingValue = getNestedValue(draft.forms[formKey].values, name)
+		this.persister.clearAll(this.records.keys())
+	}
 
-				if (isEmpty(existingValue) && !isEmpty(value)) {
-					draft.forms[formKey].values = setNestedValue(
-						draft.forms[formKey].values,
-						name,
-						value,
-					) as Record<string, unknown>
-				} else if (!isEmpty(existingValue)) {
-					const el = fieldMap.get(name)
-					const isRadio = el instanceof HTMLInputElement && el.type === 'radio'
-					if (isRadio) {
-						const group = this.radioGroups.get(formKey)?.get(name)
-						if (group) {
-							for (const radioEl of group) {
-								this.setInputValueInternal(radioEl, existingValue, formKey)
-							}
-						}
-					} else if (el) {
-						this.setInputValueInternal(el, existingValue, formKey)
-					}
-				}
+	/*
+	 *   RECORDS AND EVENTS
+	 ************************************************************************************************/
+	private getRecord(key: string): FormRecord {
+		let record = this.records.get(key)
+
+		if (!record) {
+			record = new FormRecord(key, this.host)
+			this.records.set(key, record)
+		}
+
+		return record
+	}
+
+	private emit<TType extends keyof DriftEventMap>(
+		type: TType,
+		payload: DriftEventMap[TType],
+	): void {
+		const set = this.listeners.get(type)
+
+		if (!set || set.size === 0) {
+			if (type === 'error') {
+				this.logError(payload as DriftEventMap['error'])
+			}
+
+			return
+		}
+
+		for (const listener of [...set]) {
+			try {
+				listener(payload)
+			} catch (error) {
+				console.error('[drift] A listener threw', error)
+			}
+		}
+	}
+
+	/** Logs where an error came from, never its message, which can echo a field's value. */
+	private logError({ phase, formKey, name, error }: DriftEventMap['error']): void {
+		const kind = error instanceof Error ? error.name : typeof error
+		const field = name === undefined ? '' : `, field "${name}"`
+
+		console.error(`[drift] ${phase} error (${kind}) in form "${formKey}"${field}`)
+	}
+
+	/** Warns once per message, and only in development. */
+	private warn(message: string): void {
+		if (!IS_DEVELOPMENT || this.warned.has(message)) {
+			return
+		}
+
+		this.warned.add(message)
+		console.warn(`[drift] ${message}`)
+	}
+
+	private getDefaultRoot(): Element {
+		if (typeof document === 'undefined') {
+			throw new DriftError('There is no document to observe. Pass a root element.', 'NO_DOM')
+		}
+
+		const body = document.body as HTMLElement | null
+
+		if (!body) {
+			throw new DriftError(
+				'document.body does not exist yet. Call observe() after DOMContentLoaded.',
+				'NO_BODY',
+			)
+		}
+
+		return body
+	}
+
+	/*
+	 *   RECONCILING
+	 ************************************************************************************************/
+	private process(records: readonly MutationRecord[]): void {
+		for (const node of collectTargets(records)) {
+			this.reconcile(node)
+		}
+
+		// A duplicate was skipped while its twin was still bound, and the twin has gone since
+		if (this.hasSkipped && this.hasFreed && this.root) {
+			this.hasSkipped = false
+			this.hasFreed = false
+			this.reconcile(this.root)
+		}
+
+		this.hasFreed = false
+	}
+
+	private queryWithin(node: Element, selector: string): Element[] {
+		const found = queryAllOf(node, selector)
+
+		return matchesSelector(node, selector) ? [node, ...found] : found
+	}
+
+	private reconcile(node: Node): void {
+		if (!(node instanceof Element)) {
+			return
+		}
+
+		const registered = new Map<FormRecord, Set<FieldRecord>>()
+
+		for (const element of this.queryWithin(node, `[${this.config.attributes.form}]`)) {
+			this.reconcileForm(element)
+		}
+
+		for (const element of this.queryWithin(node, FIELD_SELECTOR)) {
+			this.reconcileField(element, registered)
+		}
+
+		for (const [record, fields] of registered) {
+			record.register(fields)
+		}
+	}
+
+	private isTracked(element: Element): boolean {
+		return (
+			this.root !== null &&
+			isConnectedNode(element) &&
+			containsNode(this.root, element) &&
+			!closestOf(element, `[${this.config.attributes.ignore}]`)
+		)
+	}
+
+	private reconcileForm(element: Element): void {
+		const key = attributeOf(element, this.config.attributes.form)
+		const current = this.formOf.get(element)
+		const trackedKey = key !== null && key !== '' && this.isTracked(element) ? key : null
+
+		if (current && current.key !== trackedKey) {
+			this.formOf.delete(element)
+			this.hasFreed = true
+			current.detach()
+		}
+
+		if (trackedKey === null || this.formOf.has(element)) {
+			return
+		}
+
+		const record = this.getRecord(trackedKey)
+
+		if (record.element && record.element !== element) {
+			this.hasSkipped = true
+			this.warn(
+				`Form "${trackedKey}" is on more than one element, so the later one is not tracked`,
+			)
+
+			return
+		}
+
+		this.attachForm(element, record, trackedKey)
+	}
+
+	private attachForm(element: Element, record: FormRecord, key: string): void {
+		try {
+			this.formOf.set(element, record)
+			record.attach(element)
+		} catch (error) {
+			// A form that can't be tracked must not fall back to a native submit with its values
+			this.formOf.delete(element)
+			this.failedForms.add(element)
+			this.emit('error', { formKey: key, phase: 'register', error })
+
+			return
+		}
+
+		const { persist } = this.config.attributes
+
+		if (attributeOf(element, persist) !== null) {
+			this.warn(
+				`Form "${key}" has ${persist}, which does nothing on a form. Use drift.form('${key}', { persist: true })`,
+			)
+		}
+	}
+
+	private findOwner(element: Element): FormRecord | null {
+		if (!this.isTracked(element)) {
+			return null
+		}
+
+		const host = closestOf(element, `[${this.config.attributes.form}]`)
+
+		return (host && this.formOf.get(host)) ?? null
+	}
+
+	private keepsBinding(binding: Binding, owner: FormRecord, element: FieldElement): boolean {
+		return (
+			isTrackable(element) &&
+			binding.record === owner &&
+			binding.field.name === element.name &&
+			binding.type === element.type
+		)
+	}
+
+	private reconcileField(element: Element, registered: Map<FormRecord, Set<FieldRecord>>): void {
+		if (!isFieldTag(element)) {
+			return
+		}
+
+		const existing = this.bindings.get(element)
+		const owner = this.findOwner(element)
+
+		if (existing && owner && this.keepsBinding(existing, owner, element)) {
+			owner.noteElement(element)
+
+			return
+		}
+
+		if (existing) {
+			this.unbindElement(element)
+		}
+
+		if (!owner || !isTrackable(element)) {
+			return
+		}
+
+		const field = owner.bind(element)
+
+		if (!field) {
+			this.hasSkipped = true
+
+			return
+		}
+
+		this.bindings.set(element, this.createBinding(owner, field, element))
+
+		const fields = registered.get(owner) ?? new Set<FieldRecord>()
+
+		fields.add(field)
+		registered.set(owner, fields)
+	}
+
+	private createBinding(record: FormRecord, field: FieldRecord, element: FieldElement): Binding {
+		const restore =
+			field.kind === 'file'
+				? null
+				: (this.config.track?.(
+						element,
+						field.kind,
+						() => {
+							record.readFromDom(field, 'api')
+						},
+						() => field.isWriting,
+					) ?? null)
+
+		return { record, field, element, type: element.type, restore }
+	}
+
+	private unbindElement(element: Element): void {
+		const binding = this.bindings.get(element)
+
+		if (!binding) {
+			return
+		}
+
+		this.bindings.delete(element)
+		this.hasFreed = true
+		binding.restore?.()
+		binding.record.unbind(binding.field, binding.element)
+	}
+
+	/*
+	 *   ROOT LISTENERS
+	 ************************************************************************************************/
+	private getBinding(event: Event): Binding | undefined {
+		return event.target instanceof Element ? this.bindings.get(event.target) : undefined
+	}
+
+	private readonly handleInput = (event: Event): void => {
+		const binding = this.getBinding(event)
+
+		if (!binding || binding.field.isWriting) {
+			return
+		}
+
+		binding.record.readFromDom(binding.field, 'user', event.type === 'change')
+	}
+
+	private readonly handleFocusIn = (event: Event): void => {
+		const binding = this.getBinding(event)
+
+		if (binding) {
+			binding.record.focus(binding.field)
+		}
+	}
+
+	private readonly handleFocusOut = (event: Event): void => {
+		const binding = this.getBinding(event)
+
+		if (binding) {
+			binding.record.blur(binding.field)
+		}
+	}
+
+	private readonly handleSubmit = (event: Event): void => {
+		const form = event.target instanceof Element ? event.target : null
+		const record = form && this.formOf.get(form)
+
+		if (form && this.failedForms.has(form)) {
+			event.preventDefault()
+
+			return
+		}
+
+		if (!form || !record || passThrough.has(form)) {
+			return
+		}
+
+		event.preventDefault()
+
+		const submitter = (event as SubmitEvent).submitter as HTMLElement | null | undefined
+		const hadHandler = record.hasSubmitHandler()
+		const startsRun = !record.isRunning()
+
+		void record.submit().then(result => {
+			const isDone = result.status === 'submitted' && startsRun && !hadHandler
+
+			// A browser ignores requestSubmit() inside the dispatch of the event it answers, and
+			// microtasks still run inside it, so the re-submit waits for a task of its own
+			if (isDone && form instanceof HTMLFormElement) {
+				setTimeout(() => {
+					this.submitNatively(form, record, submitter ?? undefined)
+				}, 0)
 			}
 		})
-
-		for (const field of fields) {
-			if (!field.name) continue
-			this.attachFieldListeners(field, formKey, field.name)
-		}
-
-		for (const { name, value } of fieldData) {
-			this.emitEvent({ type: 'field:register', formKey, fieldName: name, value })
-		}
 	}
 
-	private handleFieldRemoved(field: DriftInputElement, _form: Element, formKey: string): void {
-		const fieldName = field.name
-
-		if (field instanceof HTMLInputElement && field.type === 'radio') {
-			const group = this.radioGroups.get(formKey)?.get(fieldName)
-			if (group) {
-				group.delete(field)
-				if (group.size === 0) {
-					this.radioGroups.get(formKey)?.delete(fieldName)
-					if (this.radioGroups.get(formKey)?.size === 0) {
-						this.radioGroups.delete(formKey)
-					}
-				}
-			}
-		}
-
-		if (fieldName) {
-			this.emitEvent({ type: 'field:unregister', formKey, fieldName })
-		}
-	}
-
-	private attachFieldListeners(
-		field: DriftInputElement,
-		formKey: string,
-		fieldName: string,
+	/** Submits a validated form that has no handler, so `action` and the submitter still work. */
+	private submitNatively(
+		form: HTMLFormElement,
+		record: FormRecord,
+		submitter: HTMLElement | undefined,
 	): void {
-		const isRadio = field instanceof HTMLInputElement && field.type === 'radio'
-
-		const handleChange = () => {
-			if (this.suppressedElements.has(field)) return
-
-			let value: unknown
-			if (isRadio) {
-				const group = this.radioGroups.get(formKey)?.get(fieldName)
-				value = group
-					? (Array.from(group).find(el => el.checked)?.value ?? null)
-					: getInputValue(field)
-			} else {
-				value = getInputValue(field)
-			}
-
-			const fieldSchema = this.registry.getFieldSchema(formKey, fieldName)
-			if (fieldSchema?.transform) {
-				value = fieldSchema.transform(value)
-			}
-
-			this.state.mutate(draft => {
-				if (!draft.forms[formKey]) return
-
-				draft.forms[formKey].values = setNestedValue(
-					draft.forms[formKey].values,
-					fieldName,
-					value,
-				) as Record<string, unknown>
-				draft.forms[formKey].dirty[fieldName] = true
-			})
-
-			this.emitEvent({ type: 'field:change', formKey, fieldName, value })
-			this.triggerFieldValidation(formKey, fieldName, 'change')
+		if (!isConnectedNode(form)) {
+			return
 		}
 
-		const handleBlur = () => {
-			this.state.mutate(draft => {
-				if (!draft.forms[formKey]) return
-				draft.forms[formKey].touched[fieldName] = true
-			})
+		passThrough.add(form)
 
-			this.emitEvent({ type: 'field:blur', formKey, fieldName })
-			this.triggerFieldValidation(formKey, fieldName, 'blur')
-		}
-
-		const handleFocus = () => {
-			this.emitEvent({ type: 'field:focus', formKey, fieldName })
-		}
-
-		if (isRadio || field instanceof HTMLSelectElement) {
-			field.addEventListener('change', handleChange)
-		} else {
-			field.addEventListener('input', handleChange)
-		}
-
-		field.addEventListener('blur', handleBlur)
-		field.addEventListener('focus', handleFocus)
-
-		this.watchForProgrammaticChanges(field)
-	}
-
-	private triggerFieldValidation(
-		formKey: string,
-		fieldName: string,
-		eventType: 'change' | 'blur',
-	): void {
-		const fieldSchema = this.registry.getFieldSchema(formKey, fieldName)
-		const trigger = fieldSchema?.validateOn ?? this.config.defaultValidateOn
-		const hasErrors = (this.getForm(formKey)?.errors[fieldName]?.length ?? 0) > 0
-
-		if (trigger === undefined && !hasErrors) return
-
-		if (trigger === eventType || hasErrors) {
-			this.validateField(formKey, fieldName)
-		} else if (typeof trigger === 'object' && 'debounce' in trigger && eventType === 'change') {
-			this.debouncedValidation(formKey, fieldName, trigger.debounce)
+		try {
+			requestSubmitOf(form, submitter)
+		} catch (error) {
+			this.emit('error', { formKey: record.key, phase: 'submit', error })
+		} finally {
+			passThrough.delete(form)
 		}
 	}
 
-	private debouncedValidation(formKey: string, fieldName: string, delayMs: number): void {
-		const key = `${formKey}:${fieldName}`
+	private readonly handleReset = (event: Event): void => {
+		const record = event.target instanceof Element ? this.formOf.get(event.target) : undefined
 
-		const existingTimer = this.debounceTimers.get(key)
-		if (existingTimer) {
-			clearTimeout(existingTimer)
+		if (!record) {
+			return
 		}
 
-		const timer = setTimeout(() => {
-			this.debounceTimers.delete(key)
-			this.validateField(formKey, fieldName)
-		}, delayMs)
-
-		this.debounceTimers.set(key, timer)
+		event.preventDefault()
+		void record.reset()
 	}
 
-	private setInputValueInternal(
-		element: DriftInputElement,
-		value: unknown,
-		formKey?: string,
-	): void {
-		if (formKey && element instanceof HTMLInputElement && element.type === 'radio') {
-			const group = this.radioGroups.get(formKey)?.get(element.name)
-			if (group) {
-				for (const el of group) {
-					this.suppressedElements.add(el)
-					el.checked = el.value === String(value ?? '')
-					this.suppressedElements.delete(el)
-				}
-				return
-			}
-		}
-
-		this.suppressedElements.add(element)
-		setInputValue(element, value)
-		this.suppressedElements.delete(element)
-	}
-
-	private watchForProgrammaticChanges(field: DriftInputElement): void {
-		const isCheckable =
-			field instanceof HTMLInputElement &&
-			(field.type === 'checkbox' || field.type === 'radio')
-		const prop = isCheckable ? 'checked' : 'value'
-
-		const proto = Object.getPrototypeOf(field)
-		const descriptor = Object.getOwnPropertyDescriptor(proto, prop)
-		if (!descriptor?.set || !descriptor?.get) return
-
-		const nativeGet = descriptor.get
-		const nativeSet = descriptor.set
-
-		Object.defineProperty(field, prop, {
-			get: () => nativeGet.call(field),
-			set: (newValue: unknown) => {
-				const oldValue = nativeGet.call(field)
-				nativeSet.call(field, newValue)
-				if (oldValue !== newValue && !this.suppressedElements.has(field)) {
-					field.dispatchEvent(
-						new Event(isCheckable ? 'change' : 'input', { bubbles: true }),
-					)
-				}
-			},
-			configurable: true,
-		})
-	}
-
-	private clearDebounceTimersForForm(formKey: string): void {
-		for (const [key, timer] of this.debounceTimers) {
-			if (key.startsWith(`${formKey}:`)) {
-				clearTimeout(timer)
-				this.debounceTimers.delete(key)
-			}
+	private readonly handlePageHide = (): void => {
+		for (const record of this.records.values()) {
+			record.flushPersist()
 		}
 	}
 
-	private clearAllDebounceTimers(): void {
-		for (const timer of this.debounceTimers.values()) {
-			clearTimeout(timer)
+	private readonly handleVisibility = (): void => {
+		if (this.root?.ownerDocument.visibilityState === 'hidden') {
+			this.handlePageHide()
 		}
-		this.debounceTimers.clear()
-	}
-
-	private emitEvent(event: DriftEvent): void {
-		this.emitter.emit(event)
 	}
 }
