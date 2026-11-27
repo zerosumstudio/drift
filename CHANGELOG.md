@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 - 2026-11-27
+## 1.0.0 - 2026-11-28
 
 First release under `@zerosumstudio`. Everything below is a change from `@bkincz/drift` 1.4.0, and the [migration guide](./docs/migration-1.0.md) opens with a checklist.
 
