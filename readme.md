@@ -1,5 +1,7 @@
 # Drift
 
+> **This package has moved to [`@zerosumstudio/drift`](https://www.npmjs.com/package/@zerosumstudio/drift).** `@bkincz/drift` is no longer maintained and won't get updates or fixes. To upgrade, follow the [migration guide](https://github.com/zerosumstudio/drift/blob/main/docs/migration-1.0.md).
+
 [![Release](https://github.com/bkincz/drift/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/bkincz/drift/actions/workflows/release.yml)
 [![codecov](https://codecov.io/gh/bkincz/drift/branch/main/graph/badge.svg)](https://codecov.io/gh/bkincz/drift)
 [![npm version](https://badge.fury.io/js/@bkincz%2Fdrift.svg)](https://badge.fury.io/js/@bkincz%2Fdrift)
