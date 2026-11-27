@@ -1,12 +1,15 @@
 /*
  *   IMPORTS
  ***************************************************************************************************/
-import { afterEach, vi } from 'vitest'
+import { afterEach } from 'vitest'
 
 /*
  *   SETUP
  ***************************************************************************************************/
-// Cleanup after each test
 afterEach(() => {
-	vi.clearAllMocks()
+	// The node-environment tests have no document
+	if (typeof document === 'undefined') return
+
+	document.body.innerHTML = ''
+	window.localStorage.clear()
 })
